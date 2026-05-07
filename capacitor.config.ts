@@ -1,0 +1,19 @@
+import type { CapacitorConfig } from '@capacitor/cli';
+
+const config: CapacitorConfig = {
+  appId: 'app.lovable.f05a170f63694cf9b9431a13dae3e645',
+  appName: 'CyberSmart',
+  webDir: 'dist',
+  server: {
+    url: 'https://f05a170f-6369-4cf9-b943-1a13dae3e645.lovableproject.com?forceHideBadge=true',
+    cleartext: true,
+  },
+  plugins: {
+    StatusBar: {
+      style: 'DARK',
+      backgroundColor: '#0a0f1c',
+    },
+  },
+};
+
+export default config;

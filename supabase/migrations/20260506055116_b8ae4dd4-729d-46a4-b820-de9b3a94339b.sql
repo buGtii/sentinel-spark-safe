@@ -1,0 +1,1 @@
+revoke execute on function public.recompute_report_votes() from public, anon, authenticated;

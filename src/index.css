@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    /* CyberSmart - Dark cyber theme (default) */
+    --background: 222 47% 5%;
+    --foreground: 180 100% 95%;
+
+    --card: 222 47% 8%;
+    --card-foreground: 180 100% 95%;
+
+    --popover: 222 47% 7%;
+    --popover-foreground: 180 100% 95%;
+
+    --primary: 174 100% 50%;
+    --primary-foreground: 222 47% 5%;
+    --primary-glow: 174 100% 65%;
+
+    --secondary: 222 40% 14%;
+    --secondary-foreground: 180 100% 95%;
+
+    --muted: 222 30% 14%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 270 95% 65%;
+    --accent-foreground: 222 47% 5%;
+
+    --destructive: 0 90% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --warning: 38 95% 55%;
+    --warning-foreground: 222 47% 5%;
+
+    --success: 142 76% 50%;
+    --success-foreground: 222 47% 5%;
+
+    --border: 222 40% 18%;
+    --input: 222 40% 14%;
+    --ring: 174 100% 50%;
+
+    --radius: 0.875rem;
+
+    --gradient-primary: linear-gradient(135deg, hsl(174 100% 50%), hsl(195 100% 55%));
+    --gradient-danger: linear-gradient(135deg, hsl(0 90% 60%), hsl(330 90% 55%));
+    --gradient-cyber: linear-gradient(135deg, hsl(270 95% 65%), hsl(195 100% 55%), hsl(174 100% 50%));
+    --gradient-bg: radial-gradient(ellipse at top, hsl(222 47% 12%) 0%, hsl(222 47% 5%) 60%);
+
+    --shadow-glow: 0 0 40px hsl(174 100% 50% / 0.35);
+    --shadow-danger: 0 0 40px hsl(0 90% 60% / 0.4);
+    --shadow-card: 0 8px 32px hsl(222 47% 2% / 0.6);
+
+    --sidebar-background: 222 47% 7%;
+    --sidebar-foreground: 180 100% 95%;
+    --sidebar-primary: 174 100% 50%;
+    --sidebar-primary-foreground: 222 47% 5%;
+    --sidebar-accent: 222 40% 14%;
+    --sidebar-accent-foreground: 180 100% 95%;
+    --sidebar-border: 222 40% 18%;
+    --sidebar-ring: 174 100% 50%;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  html, body, #root { height: 100%; }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    background: var(--gradient-bg);
+    background-attachment: fixed;
+  }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+}
+
+@layer utilities {
+  .gradient-primary { background: var(--gradient-primary); }
+  .gradient-danger { background: var(--gradient-danger); }
+  .gradient-cyber { background: var(--gradient-cyber); }
+  .text-gradient-cyber {
+    background: var(--gradient-cyber);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .glow { box-shadow: var(--shadow-glow); }
+  .glow-danger { box-shadow: var(--shadow-danger); }
+  .shadow-card { box-shadow: var(--shadow-card); }
+  .glass {
+    background: hsl(222 47% 8% / 0.6);
+    backdrop-filter: blur(20px);
+    border: 1px solid hsl(174 100% 50% / 0.15);
+  }
+  .scanline {
+    background: linear-gradient(180deg, transparent 0%, hsl(174 100% 50% / 0.1) 50%, transparent 100%);
+  }
+}
