@@ -68,12 +68,22 @@ function urlHeuristics(raw: string) {
       const labels = subs.slice(0, -2); // drop registrable + tld
       const rootLabel = subs.length >= 2 ? subs[subs.length - 2] : "";
       const hasDigitLetterMix = /[a-z]/.test(rootLabel) && /\d/.test(rootLabel);
-      if (rootLabel.length >= 5 && entropy(rootLabel) >= 3.0 && hasDigitLetterMix) {
-        score += 22; reasons.push(`High-entropy domain label "${rootLabel}" (looks auto-generated)`);
+      // Short letter+digit labels like "bhy0908", "ax12kd9" are very common in disposable phishing/redirector domains.
+      if (rootLabel.length >= 5 && hasDigitLetterMix) {
+        const consonants = (rootLabel.match(/[bcdfghjklmnpqrstvwxyz]/gi) || []).length;
+        const vowels = (rootLabel.match(/[aeiou]/gi) || []).length;
+        const unpronounceable = vowels === 0 || consonants / Math.max(1, rootLabel.length) > 0.55;
+        if (entropy(rootLabel) >= 2.4 || unpronounceable) {
+          score += 24; reasons.push(`Random/auto-generated registrable label "${rootLabel}"`);
+        }
       }
       for (const lbl of labels) {
-        if (lbl.length >= 4 && entropy(lbl) >= 2.8 && /\d/.test(lbl) && /[a-z]/.test(lbl)) {
-          score += 10; reasons.push(`Random-looking subdomain "${lbl}"`); break;
+        // Short numeric-prefixed subdomains like "m8", "a1", "c7" are classic disposable hosts.
+        if (/^[a-z]{1,3}\d+$/i.test(lbl)) {
+          score += 10; reasons.push(`Disposable-looking subdomain "${lbl}"`); break;
+        }
+        if (lbl.length >= 4 && entropy(lbl) >= 2.6 && /\d/.test(lbl) && /[a-z]/.test(lbl)) {
+          score += 12; reasons.push(`Random-looking subdomain "${lbl}"`); break;
         }
       }
 
@@ -81,15 +91,21 @@ function urlHeuristics(raw: string) {
       const segments = path.split("/").filter(Boolean);
       if (segments.length >= 1) {
         const last = segments[segments.length - 1];
-        if (segments.length <= 3 && last.length >= 6 && last.length <= 14 &&
+        if (segments.length <= 3 && last.length >= 6 && last.length <= 16 &&
+            /^[A-Za-z0-9_-]+$/.test(last) && entropy(last) >= 2.8 &&
+            /[A-Z]/.test(last) && /[a-z]/.test(last) && /\d/.test(last) &&
+            !/\.(html?|php|aspx?)$/i.test(last)) {
+          score += 22; reasons.push(`Opaque short-link style slug "${last}" (possible redirector / one-time link)`);
+        } else if (segments.length <= 3 && last.length >= 6 && last.length <= 14 &&
             /^[A-Za-z0-9_-]+$/.test(last) && entropy(last) >= 3.2 &&
             !/\.(html?|php|aspx?)$/i.test(last)) {
           score += 18; reasons.push("Opaque short-link style path (possible redirector / one-time link)");
         }
         if (/^(s|r|l|t|go|out|click|track|redir|redirect)$/i.test(segments[0]) && segments.length <= 3) {
-          score += 8; reasons.push("Path looks like a redirector endpoint");
+          score += 10; reasons.push("Path looks like a redirector endpoint");
         }
       }
+
 
       // Brand impersonation: brand keyword present but not on the official brand domain.
       const brands = ["paypal","apple","microsoft","google","amazon","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
