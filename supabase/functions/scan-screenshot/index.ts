@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "You are a phishing-detection vision model. Analyze the screenshot for phishing, brand impersonation, fake login pages, scam SMS/email, urgency language, suspicious UI patterns. Respond ONLY by calling the tool." },
+          { role: "system", content: "You are a senior phishing-detection vision analyst. Most screenshots users send are LEGITIMATE (real bank OTP SMS, real login pages on official domains, normal chats, receipts, marketing). Do NOT flag a screenshot as suspicious/malicious unless there is concrete visible evidence: a deceptive/lookalike URL in the address bar, brand impersonation from a wrong domain, fake login form on non-official URL, scam payment/gift-card demands, urgency + credential request, or visible phishing indicators. If the page/message looks like normal benign content, set verdict='safe', risk_score 0-20, red_flags=[] (do NOT invent flags), and explain why it appears legitimate. Use 'suspicious' (40-69) only for 2+ concrete indicators or one strong unconfirmed signal. Use 'malicious' (70-100) only when phishing intent is clearly visible. Always call the tool." },
           { role: "user", content: [
             { type: "text", text: "Analyze this screenshot for phishing or scam indicators." },
             { type: "image_url", image_url: { url: dataUrl } },
