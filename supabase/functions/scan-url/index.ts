@@ -12,38 +12,54 @@ function looksHomograph(host: string): boolean {
   return /(^|\.)xn--/.test(host);
 }
 
+// Well-known legitimate domains/suffixes — never auto-flag these from heuristics alone.
+const TRUSTED_SUFFIXES = [
+  "google.com","youtube.com","youtu.be","gmail.com","apple.com","icloud.com","microsoft.com","live.com","outlook.com",
+  "office.com","bing.com","amazon.com","amazon.in","aws.amazon.com","facebook.com","fb.com","instagram.com","whatsapp.com",
+  "twitter.com","x.com","linkedin.com","github.com","gitlab.com","stackoverflow.com","reddit.com","wikipedia.org",
+  "netflix.com","spotify.com","paypal.com","stripe.com","cloudflare.com","openai.com","anthropic.com","lovable.app",
+  "lovable.dev","supabase.co","supabase.com","vercel.app","netlify.app","github.io","wikipedia.org","mozilla.org",
+  "yahoo.com","bing.com","duckduckgo.com","zoom.us","slack.com","discord.com","discord.gg","t.me","telegram.org",
+  "drive.google.com","docs.google.com","maps.google.com","play.google.com",
+];
+function isTrusted(host: string) {
+  return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 function urlHeuristics(raw: string) {
   const reasons: string[] = [];
   let score = 0;
   try {
     const u = new URL(raw);
     const host = u.hostname.toLowerCase();
+    const trusted = isTrusted(host);
 
+    // Hard signals — these matter regardless.
     if (/^(\d+\.){3}\d+$/.test(host)) { score += 35; reasons.push("Hosted on raw IP address (no domain)"); }
-    if (host.length > 40) { score += 10; reasons.push("Very long hostname"); }
-    if ((host.match(/-/g) || []).length >= 3) { score += 10; reasons.push("Excessive dashes in hostname"); }
-    if (u.protocol !== "https:") { score += 18; reasons.push("Insecure (no HTTPS)"); }
     if (looksHomograph(host)) { score += 25; reasons.push("Internationalized/punycode domain (possible homograph)"); }
-
-    const suspiciousTlds = [".zip", ".mov", ".xyz", ".top", ".tk", ".click", ".country", ".gq", ".ml", ".cf", ".work", ".loan"];
-    if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
-
-    const subs = host.split(".");
-    if (subs.length > 4) { score += 12; reasons.push("Excessive subdomains (subdomain abuse)"); }
-
-    const brands = ["paypal","apple","microsoft","google","amazon","bank","secure","verify","login","update","wallet","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
-    const suspiciousBrandUse = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.org`));
-    if (suspiciousBrandUse.length) { score += 28; reasons.push(`Possible brand impersonation: ${suspiciousBrandUse.join(", ")}`); }
-
-    if (raw.length > 100) { score += 10; reasons.push("Very long URL"); }
     if (/@/.test(raw)) { score += 30; reasons.push("Contains '@' symbol (URL credentials trick)"); }
-    if (u.pathname.split("/").length > 6) { score += 5; reasons.push("Deep URL path"); }
-    if (/%[0-9a-f]{2}/i.test(u.pathname + u.search)) { score += 8; reasons.push("Heavy URL encoding"); }
-    const sensitive = ["login","signin","verify","update","secure","account","wallet","unlock","support","reset"];
-    if (sensitive.some(w => (u.pathname + u.search).toLowerCase().includes(w))) { score += 8; reasons.push("Credential-harvesting keywords in path"); }
+
+    if (!trusted) {
+      // Soft signals — only count for non-trusted hosts to avoid false positives on legit sites.
+      if (u.protocol !== "https:" && u.protocol !== "http:") { /* skip */ }
+      else if (u.protocol !== "https:") { score += 12; reasons.push("Insecure (no HTTPS)"); }
+
+      if ((host.match(/-/g) || []).length >= 4) { score += 8; reasons.push("Excessive dashes in hostname"); }
+
+      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country"];
+      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
+
+      const subs = host.split(".");
+      if (subs.length > 5) { score += 10; reasons.push("Excessive subdomains (subdomain abuse)"); }
+
+      // Brand impersonation: brand keyword present but not on the official brand domain.
+      const brands = ["paypal","apple","microsoft","google","amazon","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
+      const impersonated = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.${k === "amazon" ? "in" : "org"}`));
+      if (impersonated.length) { score += 28; reasons.push(`Possible brand impersonation: ${impersonated.join(", ")}`); }
+    }
   } catch {
     reasons.push("Invalid URL format");
-    score = 50;
+    score = 40;
   }
   return { score: Math.min(100, score), reasons };
 }
