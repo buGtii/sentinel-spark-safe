@@ -113,19 +113,25 @@ async function decodeWithZxingFromCanvas(canvas: HTMLCanvasElement): Promise<str
   }
 }
 
-async function decodeFromImage(img: HTMLImageElement): Promise<string | null> {
+async function decodeFromImage(
+  img: HTMLImageElement,
+  attempts: DecodeAttempt[],
+): Promise<{ payload: string; engine: "zxing" | "jsqr" } | null> {
   const sourceWidth = img.naturalWidth || img.width;
   const sourceHeight = img.naturalHeight || img.height;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx || !sourceWidth || !sourceHeight) return null;
 
+  const directStart = performance.now();
   try {
     const direct = await zxingReader.decodeFromImageElement(img);
     const text = direct?.getText?.() || direct?.toString?.();
-    if (text) return text;
+    const dur = performance.now() - directStart;
+    attempts.push({ pass: "direct", engine: "zxing", durationMs: dur, success: !!text, width: sourceWidth, height: sourceHeight });
+    if (text) return { payload: text, engine: "zxing" };
   } catch {
-    // Fall through to enhanced decoding passes.
+    attempts.push({ pass: "direct", engine: "zxing", durationMs: performance.now() - directStart, success: false, width: sourceWidth, height: sourceHeight });
   }
 
   for (const variant of buildImageVariants(img)) {
@@ -142,12 +148,18 @@ async function decodeFromImage(img: HTMLImageElement): Promise<string | null> {
     ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, w, h);
     ctx.filter = "none";
 
+    const passLabel = `s${variant.scale.toFixed(2)}·c${variant.crop.toFixed(2)}·k${variant.contrast.toFixed(2)}`;
     const imageData = ctx.getImageData(0, 0, w, h);
-    const jsQrResult = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-    if (jsQrResult?.data) return jsQrResult.data;
 
+    const jsStart = performance.now();
+    const jsQrResult = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+    attempts.push({ pass: passLabel, engine: "jsqr", durationMs: performance.now() - jsStart, success: !!jsQrResult?.data, width: w, height: h });
+    if (jsQrResult?.data) return { payload: jsQrResult.data, engine: "jsqr" };
+
+    const zxStart = performance.now();
     const zxingResult = await decodeWithZxingFromCanvas(canvas);
-    if (zxingResult) return zxingResult;
+    attempts.push({ pass: passLabel, engine: "zxing", durationMs: performance.now() - zxStart, success: !!zxingResult, width: w, height: h });
+    if (zxingResult) return { payload: zxingResult, engine: "zxing" };
   }
 
   return null;
@@ -160,6 +172,7 @@ export default function QRScan() {
   const [cameraOn, setCameraOn] = useState(false);
   const [status, setStatus] = useState<ScanStatus>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraFileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
