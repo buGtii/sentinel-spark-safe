@@ -2,13 +2,50 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import jsQR from "jsqr";
-import { Camera, CheckCircle2, Image as ImageIcon, Loader2, QrCode, RotateCcw, ShieldCheck, Upload, X } from "lucide-react";
+import { Activity, Camera, CheckCircle2, Copy, ExternalLink, FileSearch, Image as ImageIcon, Loader2, QrCode, RotateCcw, ShieldCheck, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { runScan, persistScan } from "@/lib/scans";
 import { VerdictBadge } from "@/components/VerdictBadge";
 
 type ScanStatus = "idle" | "reading" | "found" | "scanning" | "not-found" | "camera-error";
+
+type DecodeAttempt = {
+  pass: string;
+  engine: "zxing" | "jsqr";
+  durationMs: number;
+  success: boolean;
+  width?: number;
+  height?: number;
+};
+
+type Diagnostics = {
+  source: "image" | "camera";
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  totalMs: number;
+  attempts: DecodeAttempt[];
+  decodedBy?: "zxing" | "jsqr" | "camera-zxing";
+  payloadType: "url" | "text" | "wifi" | "tel" | "sms" | "email" | "geo" | "vcard" | "unknown";
+  payloadLength: number;
+  startedAt: string;
+};
+
+function classifyPayload(payload: string): Diagnostics["payloadType"] {
+  const p = payload.trim();
+  if (/^https?:\/\//i.test(p)) return "url";
+  if (/^WIFI:/i.test(p)) return "wifi";
+  if (/^tel:/i.test(p)) return "tel";
+  if (/^sms(to)?:/i.test(p)) return "sms";
+  if (/^mailto:/i.test(p)) return "email";
+  if (/^geo:/i.test(p)) return "geo";
+  if (/^BEGIN:VCARD/i.test(p)) return "vcard";
+  if (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(p)) return "url";
+  return "text";
+}
 
 const qrHints = new Map<DecodeHintType, unknown>([
   [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]],
@@ -76,19 +113,25 @@ async function decodeWithZxingFromCanvas(canvas: HTMLCanvasElement): Promise<str
   }
 }
 
-async function decodeFromImage(img: HTMLImageElement): Promise<string | null> {
+async function decodeFromImage(
+  img: HTMLImageElement,
+  attempts: DecodeAttempt[],
+): Promise<{ payload: string; engine: "zxing" | "jsqr" } | null> {
   const sourceWidth = img.naturalWidth || img.width;
   const sourceHeight = img.naturalHeight || img.height;
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx || !sourceWidth || !sourceHeight) return null;
 
+  const directStart = performance.now();
   try {
     const direct = await zxingReader.decodeFromImageElement(img);
     const text = direct?.getText?.() || direct?.toString?.();
-    if (text) return text;
+    const dur = performance.now() - directStart;
+    attempts.push({ pass: "direct", engine: "zxing", durationMs: dur, success: !!text, width: sourceWidth, height: sourceHeight });
+    if (text) return { payload: text, engine: "zxing" };
   } catch {
-    // Fall through to enhanced decoding passes.
+    attempts.push({ pass: "direct", engine: "zxing", durationMs: performance.now() - directStart, success: false, width: sourceWidth, height: sourceHeight });
   }
 
   for (const variant of buildImageVariants(img)) {
@@ -105,12 +148,18 @@ async function decodeFromImage(img: HTMLImageElement): Promise<string | null> {
     ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, w, h);
     ctx.filter = "none";
 
+    const passLabel = `s${variant.scale.toFixed(2)}·c${variant.crop.toFixed(2)}·k${variant.contrast.toFixed(2)}`;
     const imageData = ctx.getImageData(0, 0, w, h);
-    const jsQrResult = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
-    if (jsQrResult?.data) return jsQrResult.data;
 
+    const jsStart = performance.now();
+    const jsQrResult = jsQR(imageData.data, w, h, { inversionAttempts: "attemptBoth" });
+    attempts.push({ pass: passLabel, engine: "jsqr", durationMs: performance.now() - jsStart, success: !!jsQrResult?.data, width: w, height: h });
+    if (jsQrResult?.data) return { payload: jsQrResult.data, engine: "jsqr" };
+
+    const zxStart = performance.now();
     const zxingResult = await decodeWithZxingFromCanvas(canvas);
-    if (zxingResult) return zxingResult;
+    attempts.push({ pass: passLabel, engine: "zxing", durationMs: performance.now() - zxStart, success: !!zxingResult, width: w, height: h });
+    if (zxingResult) return { payload: zxingResult, engine: "zxing" };
   }
 
   return null;
@@ -123,6 +172,7 @@ export default function QRScan() {
   const [cameraOn, setCameraOn] = useState(false);
   const [status, setStatus] = useState<ScanStatus>("idle");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraFileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -191,21 +241,49 @@ export default function QRScan() {
     setResult(null);
     setDecoded(null);
     setLastError(null);
+    setDiagnostics(null);
     setStatus("reading");
     setBusy(true);
+
+    const attempts: DecodeAttempt[] = [];
+    const startedAt = new Date().toISOString();
+    const overallStart = performance.now();
 
     let objectUrl: string | null = null;
     try {
       const loaded = await loadImageFromFile(file);
       objectUrl = loaded.url;
-      const payload = await decodeFromImage(loaded.img);
-      if (!payload) {
+      const decodedResult = await decodeFromImage(loaded.img, attempts);
+      const totalMs = performance.now() - overallStart;
+      const baseDiag: Diagnostics = {
+        source: "image",
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        imageWidth: loaded.img.naturalWidth,
+        imageHeight: loaded.img.naturalHeight,
+        totalMs,
+        attempts,
+        startedAt,
+        payloadType: "unknown",
+        payloadLength: 0,
+        decodedBy: decodedResult?.engine,
+      };
+
+      if (!decodedResult) {
+        setDiagnostics(baseDiag);
         setStatus("not-found");
         setLastError("No QR code was detected in this image. Try a sharper image with the full QR visible and not cropped.");
-        toast.error("No QR code detected", { description: "Use a sharper photo with the full QR centered and visible." });
+        toast.error("No QR code detected", { description: "See diagnostics below for what was tried." });
         return;
       }
-      await analyzePayload(payload);
+
+      setDiagnostics({
+        ...baseDiag,
+        payloadType: classifyPayload(decodedResult.payload),
+        payloadLength: decodedResult.payload.length,
+      });
+      await analyzePayload(decodedResult.payload);
     } catch (e: any) {
       setStatus("not-found");
       setLastError(e?.message || "Could not read this image.");
@@ -229,8 +307,12 @@ export default function QRScan() {
     setResult(null);
     setDecoded(null);
     setLastError(null);
+    setDiagnostics(null);
     setCameraOn(true);
     setStatus("reading");
+
+    const cameraStart = performance.now();
+    const startedAt = new Date().toISOString();
 
     requestAnimationFrame(async () => {
       const video = videoRef.current;
@@ -251,9 +333,22 @@ export default function QRScan() {
           (scanResult, error, controlsHandle) => {
             controlsRef.current = controlsHandle;
             if (scanResult?.getText()) {
+              const text = scanResult.getText();
+              const totalMs = performance.now() - cameraStart;
               controlsHandle.stop();
               setCameraOn(false);
-              analyzePayload(scanResult.getText());
+              setDiagnostics({
+                source: "camera",
+                imageWidth: video.videoWidth,
+                imageHeight: video.videoHeight,
+                totalMs,
+                attempts: [{ pass: "live-stream", engine: "zxing", durationMs: totalMs, success: true, width: video.videoWidth, height: video.videoHeight }],
+                decodedBy: "camera-zxing",
+                payloadType: classifyPayload(text),
+                payloadLength: text.length,
+                startedAt,
+              });
+              analyzePayload(text);
               return;
             }
             if (error && error.name !== "NotFoundException") {
@@ -365,26 +460,38 @@ export default function QRScan() {
             <div className="flex items-center gap-2 text-sm font-semibold">
               <CheckCircle2 className="h-4 w-4 text-success" /> Decoded payload
             </div>
-            {hasDecodedUrl && <span className="text-[10px] font-mono text-primary uppercase">URL</span>}
+            <div className="flex items-center gap-2">
+              {diagnostics && (
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                  {diagnostics.payloadType}
+                </span>
+              )}
+              {hasDecodedUrl && <span className="text-[10px] font-mono text-primary uppercase">URL</span>}
+            </div>
           </div>
           <code className="block max-h-40 overflow-auto break-all text-xs font-mono bg-secondary/40 p-3 rounded-lg ring-1 ring-border">{decoded}</code>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="secondary" onClick={() => { navigator.clipboard?.writeText(decoded); toast.success("Copied"); }}>
+              <Copy className="h-3.5 w-3.5 mr-1.5" /> Copy
+            </Button>
+            {hasDecodedUrl && (
+              <Button size="sm" variant="outline" asChild>
+                <a href={decoded} target="_blank" rel="noopener noreferrer nofollow">
+                  <ExternalLink className="h-3.5 w-3.5 mr-1.5" /> Open in new tab
+                </a>
+              </Button>
+            )}
+          </div>
           {busy && <p className="text-sm text-muted-foreground"><Loader2 className="h-4 w-4 mr-2 inline animate-spin" />Scanning URL intelligence…</p>}
         </div>
       )}
 
+      {diagnostics && (
+        <DiagnosticsCard diagnostics={diagnostics} />
+      )}
+
       {result && (
-        <div className="glass rounded-xl p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-            <ShieldCheck className="h-4 w-4" /> QR destination analysis
-          </div>
-          <VerdictBadge verdict={result.verdict} score={result.risk_score} />
-          {result.explanation && <p className="text-sm leading-relaxed">{result.explanation}</p>}
-          {result.red_flags?.length > 0 && (
-            <ul className="text-xs space-y-1 text-muted-foreground">
-              {result.red_flags.map((flag: string, index: number) => <li key={index}>• {flag}</li>)}
-            </ul>
-          )}
-        </div>
+        <ScanReport result={result} decoded={decoded} diagnostics={diagnostics} />
       )}
     </div>
   );
@@ -394,6 +501,191 @@ function StatusPill({ active, label }: { active: boolean; label: string }) {
   return (
     <div className={`rounded-lg px-3 py-2 ring-1 ${active ? "bg-primary/10 text-primary ring-primary/30" : "bg-secondary/30 ring-border"}`}>
       <div className="font-mono uppercase tracking-normal">{label}</div>
+    </div>
+  );
+}
+
+function formatBytes(bytes?: number) {
+  if (!bytes && bytes !== 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function DiagnosticsCard({ diagnostics }: { diagnostics: Diagnostics }) {
+  const successAttempt = diagnostics.attempts.find(a => a.success);
+  const totalAttempts = diagnostics.attempts.length;
+  const failedAttempts = diagnostics.attempts.filter(a => !a.success).length;
+
+  return (
+    <div className="glass rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Activity className="h-4 w-4 text-primary" /> Scan diagnostics
+        </div>
+        <span className="text-[10px] font-mono uppercase text-muted-foreground">{diagnostics.source}</span>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <Stat label="Total time" value={`${diagnostics.totalMs.toFixed(0)} ms`} />
+        <Stat label="Decoder" value={diagnostics.decodedBy ?? "none"} />
+        <Stat label="Attempts" value={`${totalAttempts}`} sub={`${failedAttempts} skipped`} />
+        <Stat label="Resolution" value={diagnostics.imageWidth ? `${diagnostics.imageWidth}×${diagnostics.imageHeight}` : "—"} />
+        {diagnostics.source === "image" && (
+          <>
+            <Stat label="File" value={diagnostics.fileName || "—"} />
+            <Stat label="Size" value={formatBytes(diagnostics.fileSize)} />
+            <Stat label="MIME" value={diagnostics.fileType || "—"} />
+            <Stat label="Payload" value={`${diagnostics.payloadLength} chars`} />
+          </>
+        )}
+      </div>
+
+      {successAttempt && (
+        <div className="text-[11px] font-mono text-success/90">
+          ✓ Solved on pass <span className="text-success">{successAttempt.pass}</span> via {successAttempt.engine} in {successAttempt.durationMs.toFixed(0)} ms
+        </div>
+      )}
+
+      {diagnostics.attempts.length > 1 && (
+        <details className="group">
+          <summary className="cursor-pointer text-xs text-muted-foreground hover:text-foreground transition">
+            Show all decode passes ({diagnostics.attempts.length})
+          </summary>
+          <div className="mt-2 max-h-48 overflow-auto rounded-lg ring-1 ring-border">
+            <table className="w-full text-[11px] font-mono">
+              <thead className="bg-secondary/40 text-muted-foreground">
+                <tr>
+                  <th className="text-left px-2 py-1">#</th>
+                  <th className="text-left px-2 py-1">Pass</th>
+                  <th className="text-left px-2 py-1">Engine</th>
+                  <th className="text-right px-2 py-1">Time</th>
+                  <th className="text-right px-2 py-1">Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diagnostics.attempts.map((a, i) => (
+                  <tr key={i} className="border-t border-border/40">
+                    <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
+                    <td className="px-2 py-1">{a.pass}</td>
+                    <td className="px-2 py-1">{a.engine}</td>
+                    <td className="px-2 py-1 text-right">{a.durationMs.toFixed(0)} ms</td>
+                    <td className={`px-2 py-1 text-right ${a.success ? "text-success" : "text-muted-foreground"}`}>
+                      {a.success ? "hit" : "miss"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">Started {new Date(diagnostics.startedAt).toLocaleTimeString()}</p>
+    </div>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="rounded-lg bg-secondary/30 ring-1 ring-border px-2.5 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-xs font-semibold truncate" title={value}>{value}</div>
+      {sub && <div className="text-[10px] text-muted-foreground">{sub}</div>}
+    </div>
+  );
+}
+
+function safeHostname(url?: string | null) {
+  if (!url) return null;
+  try { return new URL(url).hostname; } catch { return null; }
+}
+
+function ScanReport({ result, decoded, diagnostics }: { result: any; decoded: string | null; diagnostics: Diagnostics | null }) {
+  const host = safeHostname(decoded);
+  const vt = result.virustotal || result.vt || result.details?.virustotal;
+  const sources: string[] = result.sources || result.providers || [];
+  const recommendation = result.recommendation || (
+    result.verdict === "malicious" ? "Do not visit this link. Delete the QR or report it." :
+    result.verdict === "suspicious" ? "Avoid sharing data with this destination until verified." :
+    result.verdict === "safe" ? "No threats found. Continue with normal caution." :
+    "Verdict unavailable — proceed with caution."
+  );
+
+  return (
+    <div className="glass rounded-xl p-4 space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-semibold text-primary">
+          <ShieldCheck className="h-4 w-4" /> QR destination report
+        </div>
+        <span className="text-[10px] font-mono uppercase text-muted-foreground">
+          <FileSearch className="h-3 w-3 inline mr-1" />
+          report
+        </span>
+      </div>
+
+      <VerdictBadge verdict={result.verdict} score={result.risk_score} />
+
+      {host && (
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <Stat label="Host" value={host} />
+          <Stat label="Risk score" value={`${result.risk_score ?? "—"} / 100`} />
+        </div>
+      )}
+
+      {result.explanation && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Summary</div>
+          <p className="text-sm leading-relaxed">{result.explanation}</p>
+        </div>
+      )}
+
+      {result.red_flags?.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Red flags</div>
+          <ul className="text-xs space-y-1">
+            {result.red_flags.map((flag: string, index: number) => (
+              <li key={index} className="flex gap-2"><span className="text-destructive">•</span><span>{flag}</span></li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {vt && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">VirusTotal</div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+            <Stat label="Malicious" value={`${vt.malicious ?? vt.stats?.malicious ?? 0}`} />
+            <Stat label="Suspicious" value={`${vt.suspicious ?? vt.stats?.suspicious ?? 0}`} />
+            <Stat label="Harmless" value={`${vt.harmless ?? vt.stats?.harmless ?? 0}`} />
+            <Stat label="Undetected" value={`${vt.undetected ?? vt.stats?.undetected ?? 0}`} />
+          </div>
+        </div>
+      )}
+
+      {sources.length > 0 && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Sources</div>
+          <div className="flex flex-wrap gap-1.5">
+            {sources.map((s, i) => (
+              <span key={i} className="text-[10px] font-mono bg-secondary/40 ring-1 ring-border px-2 py-0.5 rounded">
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-lg bg-primary/5 ring-1 ring-primary/20 p-3">
+        <div className="text-[10px] uppercase tracking-wider text-primary mb-1">Recommendation</div>
+        <p className="text-xs leading-relaxed">{recommendation}</p>
+      </div>
+
+      {diagnostics && (
+        <p className="text-[10px] text-muted-foreground font-mono">
+          Decoded by {diagnostics.decodedBy} in {diagnostics.totalMs.toFixed(0)} ms · {diagnostics.attempts.length} pass(es)
+        </p>
+      )}
     </div>
   );
 }
