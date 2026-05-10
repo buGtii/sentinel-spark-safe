@@ -12,38 +12,54 @@ function looksHomograph(host: string): boolean {
   return /(^|\.)xn--/.test(host);
 }
 
+// Well-known legitimate domains/suffixes — never auto-flag these from heuristics alone.
+const TRUSTED_SUFFIXES = [
+  "google.com","youtube.com","youtu.be","gmail.com","apple.com","icloud.com","microsoft.com","live.com","outlook.com",
+  "office.com","bing.com","amazon.com","amazon.in","aws.amazon.com","facebook.com","fb.com","instagram.com","whatsapp.com",
+  "twitter.com","x.com","linkedin.com","github.com","gitlab.com","stackoverflow.com","reddit.com","wikipedia.org",
+  "netflix.com","spotify.com","paypal.com","stripe.com","cloudflare.com","openai.com","anthropic.com","lovable.app",
+  "lovable.dev","supabase.co","supabase.com","vercel.app","netlify.app","github.io","wikipedia.org","mozilla.org",
+  "yahoo.com","bing.com","duckduckgo.com","zoom.us","slack.com","discord.com","discord.gg","t.me","telegram.org",
+  "drive.google.com","docs.google.com","maps.google.com","play.google.com",
+];
+function isTrusted(host: string) {
+  return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
 function urlHeuristics(raw: string) {
   const reasons: string[] = [];
   let score = 0;
   try {
     const u = new URL(raw);
     const host = u.hostname.toLowerCase();
+    const trusted = isTrusted(host);
 
+    // Hard signals — these matter regardless.
     if (/^(\d+\.){3}\d+$/.test(host)) { score += 35; reasons.push("Hosted on raw IP address (no domain)"); }
-    if (host.length > 40) { score += 10; reasons.push("Very long hostname"); }
-    if ((host.match(/-/g) || []).length >= 3) { score += 10; reasons.push("Excessive dashes in hostname"); }
-    if (u.protocol !== "https:") { score += 18; reasons.push("Insecure (no HTTPS)"); }
     if (looksHomograph(host)) { score += 25; reasons.push("Internationalized/punycode domain (possible homograph)"); }
-
-    const suspiciousTlds = [".zip", ".mov", ".xyz", ".top", ".tk", ".click", ".country", ".gq", ".ml", ".cf", ".work", ".loan"];
-    if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
-
-    const subs = host.split(".");
-    if (subs.length > 4) { score += 12; reasons.push("Excessive subdomains (subdomain abuse)"); }
-
-    const brands = ["paypal","apple","microsoft","google","amazon","bank","secure","verify","login","update","wallet","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
-    const suspiciousBrandUse = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.org`));
-    if (suspiciousBrandUse.length) { score += 28; reasons.push(`Possible brand impersonation: ${suspiciousBrandUse.join(", ")}`); }
-
-    if (raw.length > 100) { score += 10; reasons.push("Very long URL"); }
     if (/@/.test(raw)) { score += 30; reasons.push("Contains '@' symbol (URL credentials trick)"); }
-    if (u.pathname.split("/").length > 6) { score += 5; reasons.push("Deep URL path"); }
-    if (/%[0-9a-f]{2}/i.test(u.pathname + u.search)) { score += 8; reasons.push("Heavy URL encoding"); }
-    const sensitive = ["login","signin","verify","update","secure","account","wallet","unlock","support","reset"];
-    if (sensitive.some(w => (u.pathname + u.search).toLowerCase().includes(w))) { score += 8; reasons.push("Credential-harvesting keywords in path"); }
+
+    if (!trusted) {
+      // Soft signals — only count for non-trusted hosts to avoid false positives on legit sites.
+      if (u.protocol !== "https:" && u.protocol !== "http:") { /* skip */ }
+      else if (u.protocol !== "https:") { score += 12; reasons.push("Insecure (no HTTPS)"); }
+
+      if ((host.match(/-/g) || []).length >= 4) { score += 8; reasons.push("Excessive dashes in hostname"); }
+
+      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country"];
+      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
+
+      const subs = host.split(".");
+      if (subs.length > 5) { score += 10; reasons.push("Excessive subdomains (subdomain abuse)"); }
+
+      // Brand impersonation: brand keyword present but not on the official brand domain.
+      const brands = ["paypal","apple","microsoft","google","amazon","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
+      const impersonated = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.${k === "amazon" ? "in" : "org"}`));
+      if (impersonated.length) { score += 28; reasons.push(`Possible brand impersonation: ${impersonated.join(", ")}`); }
+    }
   } catch {
     reasons.push("Invalid URL format");
-    score = 50;
+    score = 40;
   }
   return { score: Math.min(100, score), reasons };
 }
@@ -76,7 +92,7 @@ async function geminiAnalysis(url: string, heuristics: any, vt: any) {
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "You are a phishing-detection expert and MITRE ATT&CK analyst. Analyze the URL using ONLY the provided signals and return structured JSON via the tool. Always include 1-4 relevant MITRE ATT&CK techniques (e.g. T1566.002 Spearphishing Link, T1598 Phishing for Information, T1583.001 Acquire Infrastructure: Domains, T1036 Masquerading) with concrete detection recommendations." },
+          { role: "system", content: "You are a phishing-detection expert and MITRE ATT&CK analyst. DEFAULT TO SAFE for well-known legitimate domains (google, youtube, github, microsoft, apple, amazon, wikipedia, etc.) and for benign personal/corporate sites. Only mark suspicious (40-69) or malicious (70-100) when there is concrete evidence: brand impersonation in the hostname, raw IP host, homograph/punycode, deceptive credential-harvesting page, VirusTotal detections, or the URL clearly mimics a known brand on a non-official domain. Treat heuristic hints as hints — do NOT escalate solely because the URL is long, has 'login' in the path, or uses a common subdomain. When VirusTotal shows 0 malicious AND 0 suspicious AND harmless>=1, the verdict MUST be 'safe' unless you have an explicit reason. Return structured JSON via the tool. Include 0-3 MITRE ATT&CK techniques only when verdict is suspicious or malicious; for safe verdicts return an empty mitre_techniques array and an empty red_flags array." },
           { role: "user", content: `URL: ${url}\nHeuristics: ${heuristics.reasons.join("; ") || "none"}\nVirusTotal: ${vt ? JSON.stringify(vt) : "unavailable"}` },
         ],
         tools: [{
@@ -139,23 +155,37 @@ Deno.serve(async (req) => {
     const vt = prefs.useVirusTotal ? await virustotalUrl(url) : null;
     const ai = prefs.useGemini ? await geminiAnalysis(url, heuristics, vt) : null;
 
-    // Blended scoring
+    // Blended scoring with VT trust override
     let score = heuristics.score;
-    if (vt) score += (vt.malicious || 0) * 15 + (vt.suspicious || 0) * 5;
-    if (ai?.risk_score) score = Math.round((score + ai.risk_score) / 2);
-    score = Math.min(100, score);
-    const verdict = score >= 70 ? "malicious" : score >= 40 ? "suspicious" : score >= 15 ? "unknown" : "safe";
+    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 1;
+    if (vt) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
+    if (ai?.risk_score != null) score = Math.round((score + ai.risk_score) / 2);
+    if (vtClean) score = Math.min(score, 12); // VT clean → cap to safe range
+    score = Math.max(0, Math.min(100, score));
+
+    let verdict: string;
+    if (ai?.verdict && (ai.verdict === "safe" || ai.verdict === "malicious" || ai.verdict === "suspicious")) {
+      verdict = ai.verdict;
+      if (vtClean && verdict !== "malicious") verdict = "safe";
+    } else {
+      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : "safe";
+    }
+    const isPhishing = verdict === "malicious" || verdict === "suspicious";
 
     return new Response(JSON.stringify({
       verdict, risk_score: score,
+      is_phishing: isPhishing,
+      phishing_label: verdict === "malicious" ? "Phishing / Malicious"
+        : verdict === "suspicious" ? "Potentially Phishing"
+        : "Not Phishing — Legitimate",
       heuristics, virustotal: vt,
       ai_analysis: ai?.explanation || null,
       explanation: ai?.explanation || null,
       recommendation: ai?.recommendation || null,
-      red_flags: ai?.red_flags || heuristics.reasons,
+      red_flags: (verdict === "safe" ? [] : (ai?.red_flags || heuristics.reasons)),
       category: ai?.category || null,
       confidence: ai?.confidence ?? null,
-      mitre_techniques: ai?.mitre_techniques || [],
+      mitre_techniques: verdict === "safe" ? [] : (ai?.mitre_techniques || []),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
