@@ -16,8 +16,20 @@ export async function runScan(type: ScanType, payload: any) {
   const { data, error } = await supabase.functions.invoke(fnMap[type], {
     body: { ...payload, _prefs: prefs },
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
+  if (error) {
+    try {
+      const ctx: any = (error as any).context;
+      if (ctx?.json) {
+        const body = await ctx.json();
+        if (body?.message) throw new Error(body.message);
+        if (body?.error) throw new Error(body.error);
+      }
+    } catch (inner: any) {
+      if (inner instanceof Error && inner.message) throw inner;
+    }
+    throw new Error("We couldn't reach the scan service. Please try again.");
+  }
+  if (data?.error && !data?.message) throw new Error(data.error);
   return data;
 }
 
