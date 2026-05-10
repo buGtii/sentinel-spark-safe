@@ -241,21 +241,49 @@ export default function QRScan() {
     setResult(null);
     setDecoded(null);
     setLastError(null);
+    setDiagnostics(null);
     setStatus("reading");
     setBusy(true);
+
+    const attempts: DecodeAttempt[] = [];
+    const startedAt = new Date().toISOString();
+    const overallStart = performance.now();
 
     let objectUrl: string | null = null;
     try {
       const loaded = await loadImageFromFile(file);
       objectUrl = loaded.url;
-      const payload = await decodeFromImage(loaded.img);
-      if (!payload) {
+      const decodedResult = await decodeFromImage(loaded.img, attempts);
+      const totalMs = performance.now() - overallStart;
+      const baseDiag: Diagnostics = {
+        source: "image",
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        imageWidth: loaded.img.naturalWidth,
+        imageHeight: loaded.img.naturalHeight,
+        totalMs,
+        attempts,
+        startedAt,
+        payloadType: "unknown",
+        payloadLength: 0,
+        decodedBy: decodedResult?.engine,
+      };
+
+      if (!decodedResult) {
+        setDiagnostics(baseDiag);
         setStatus("not-found");
         setLastError("No QR code was detected in this image. Try a sharper image with the full QR visible and not cropped.");
-        toast.error("No QR code detected", { description: "Use a sharper photo with the full QR centered and visible." });
+        toast.error("No QR code detected", { description: "See diagnostics below for what was tried." });
         return;
       }
-      await analyzePayload(payload);
+
+      setDiagnostics({
+        ...baseDiag,
+        payloadType: classifyPayload(decodedResult.payload),
+        payloadLength: decodedResult.payload.length,
+      });
+      await analyzePayload(decodedResult.payload);
     } catch (e: any) {
       setStatus("not-found");
       setLastError(e?.message || "Could not read this image.");
