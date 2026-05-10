@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import jsQR from "jsqr";
-import { Camera, CheckCircle2, Image as ImageIcon, Loader2, QrCode, RotateCcw, ShieldCheck, Upload, X } from "lucide-react";
+import { Activity, Camera, CheckCircle2, Copy, ExternalLink, FileSearch, Image as ImageIcon, Loader2, QrCode, RotateCcw, ShieldCheck, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { runScan, persistScan } from "@/lib/scans";
