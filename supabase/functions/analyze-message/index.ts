@@ -30,17 +30,25 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const sys = `You are CyberSmart's AI security analyst and MITRE ATT&CK expert. Analyze the message for phishing, scam, smishing, or social engineering. Respond ONLY with valid JSON matching this schema:
+    const sys = `You are CyberSmart's senior AI security analyst and MITRE ATT&CK expert. Your job is to ACCURATELY classify messages — false positives on legitimate messages are just as harmful as missing real threats. Most messages people receive are LEGITIMATE (OTP codes from real banks, delivery updates, family/friends, marketing, work mail). Do NOT flag a message as suspicious or malicious unless there is concrete evidence such as: a clearly deceptive/lookalike URL, a request for credentials/OTP/card/SSN combined with urgency, impersonation of a brand from an unrelated sender, payment/gift-card demands, threats, or known scam patterns.
+
+Calibration rules:
+- If the message is a normal OTP, transactional notice, marketing, personal chat, or otherwise benign → verdict "safe", category "legitimate", risk_score 0-20, red_flags should be EMPTY (do not invent flags).
+- "suspicious" (40-69) only when there are 2+ concrete indicators or one strong indicator without confirmation.
+- "malicious" (70-100) only when phishing/scam intent is clear (credential theft URL, obvious scam, blackmail, fake invoice with payment instructions, etc.).
+- Local heuristic flags are HINTS only — ignore them if the surrounding context is benign (e.g. "urgent" in a friend's text, "verify" in a real 2FA SMS).
+- Only include MITRE techniques when verdict is suspicious or malicious. For safe/legitimate messages, return mitre_techniques: [].
+
+Respond ONLY with valid JSON matching:
 {
   "verdict": "safe" | "suspicious" | "malicious",
   "risk_score": number (0-100),
   "category": "phishing" | "scam" | "smishing" | "spam" | "legitimate" | "other",
   "red_flags": string[],
-  "explanation": string (2-3 sentences),
+  "explanation": string (2-3 sentences, mention WHY safe if safe),
   "recommendation": string (one actionable sentence),
   "mitre_techniques": [ { "id": "T####[.###]", "name": string, "tactic": string, "description": string, "detection": string } ]
-}
-Always include 1-4 relevant MITRE ATT&CK techniques (e.g. T1566.001 Spearphishing Attachment, T1566.002 Spearphishing Link, T1566.003 Spearphishing via Service, T1598 Phishing for Information, T1656 Impersonation) with concrete detection guidance.`;
+}`;
 
     const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
