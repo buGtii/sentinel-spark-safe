@@ -155,23 +155,37 @@ Deno.serve(async (req) => {
     const vt = prefs.useVirusTotal ? await virustotalUrl(url) : null;
     const ai = prefs.useGemini ? await geminiAnalysis(url, heuristics, vt) : null;
 
-    // Blended scoring
+    // Blended scoring with VT trust override
     let score = heuristics.score;
-    if (vt) score += (vt.malicious || 0) * 15 + (vt.suspicious || 0) * 5;
-    if (ai?.risk_score) score = Math.round((score + ai.risk_score) / 2);
-    score = Math.min(100, score);
-    const verdict = score >= 70 ? "malicious" : score >= 40 ? "suspicious" : score >= 15 ? "unknown" : "safe";
+    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 1;
+    if (vt) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
+    if (ai?.risk_score != null) score = Math.round((score + ai.risk_score) / 2);
+    if (vtClean) score = Math.min(score, 12); // VT clean → cap to safe range
+    score = Math.max(0, Math.min(100, score));
+
+    let verdict: string;
+    if (ai?.verdict && (ai.verdict === "safe" || ai.verdict === "malicious" || ai.verdict === "suspicious")) {
+      verdict = ai.verdict;
+      if (vtClean && verdict !== "malicious") verdict = "safe";
+    } else {
+      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : "safe";
+    }
+    const isPhishing = verdict === "malicious" || verdict === "suspicious";
 
     return new Response(JSON.stringify({
       verdict, risk_score: score,
+      is_phishing: isPhishing,
+      phishing_label: verdict === "malicious" ? "Phishing / Malicious"
+        : verdict === "suspicious" ? "Potentially Phishing"
+        : "Not Phishing — Legitimate",
       heuristics, virustotal: vt,
       ai_analysis: ai?.explanation || null,
       explanation: ai?.explanation || null,
       recommendation: ai?.recommendation || null,
-      red_flags: ai?.red_flags || heuristics.reasons,
+      red_flags: (verdict === "safe" ? [] : (ai?.red_flags || heuristics.reasons)),
       category: ai?.category || null,
       confidence: ai?.confidence ?? null,
-      mitre_techniques: ai?.mitre_techniques || [],
+      mitre_techniques: verdict === "safe" ? [] : (ai?.mitre_techniques || []),
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
