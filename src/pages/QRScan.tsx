@@ -626,6 +626,24 @@ function ScanReport({ result, decoded, diagnostics }: { result: any; decoded: st
 
       <VerdictBadge verdict={result.verdict} score={result.risk_score} />
 
+      <div className={`rounded-lg p-3 ring-1 flex items-center justify-between ${
+        result.verdict === "safe"
+          ? "bg-success/10 ring-success/30 text-success"
+          : result.verdict === "malicious"
+          ? "bg-destructive/10 ring-destructive/30 text-destructive"
+          : "bg-warning/10 ring-warning/30 text-warning"
+      }`}>
+        <div className="text-xs uppercase tracking-wider font-semibold">Phishing detection</div>
+        <div className="text-sm font-bold">
+          {result.phishing_label || (
+            result.verdict === "malicious" ? "Phishing / Malicious"
+            : result.verdict === "suspicious" ? "Potentially Phishing"
+            : result.verdict === "safe" ? "Not Phishing — Legitimate"
+            : "Unknown"
+          )}
+        </div>
+      </div>
+
       {host && (
         <div className="grid grid-cols-2 gap-2 text-xs">
           <Stat label="Host" value={host} />
