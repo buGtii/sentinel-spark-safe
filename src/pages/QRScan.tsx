@@ -307,8 +307,12 @@ export default function QRScan() {
     setResult(null);
     setDecoded(null);
     setLastError(null);
+    setDiagnostics(null);
     setCameraOn(true);
     setStatus("reading");
+
+    const cameraStart = performance.now();
+    const startedAt = new Date().toISOString();
 
     requestAnimationFrame(async () => {
       const video = videoRef.current;
@@ -329,9 +333,22 @@ export default function QRScan() {
           (scanResult, error, controlsHandle) => {
             controlsRef.current = controlsHandle;
             if (scanResult?.getText()) {
+              const text = scanResult.getText();
+              const totalMs = performance.now() - cameraStart;
               controlsHandle.stop();
               setCameraOn(false);
-              analyzePayload(scanResult.getText());
+              setDiagnostics({
+                source: "camera",
+                imageWidth: video.videoWidth,
+                imageHeight: video.videoHeight,
+                totalMs,
+                attempts: [{ pass: "live-stream", engine: "zxing", durationMs: totalMs, success: true, width: video.videoWidth, height: video.videoHeight }],
+                decodedBy: "camera-zxing",
+                payloadType: classifyPayload(text),
+                payloadLength: text.length,
+                startedAt,
+              });
+              analyzePayload(text);
               return;
             }
             if (error && error.name !== "NotFoundException") {
