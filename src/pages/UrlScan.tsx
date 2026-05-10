@@ -43,6 +43,43 @@ export default function UrlScan() {
       {result && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
           <VerdictBadge verdict={result.verdict} score={result.risk_score} />
+
+          {(result.verdict_level || result.confidence != null || result.phishing_label) && (
+            <div className="glass rounded-xl p-4 grid grid-cols-3 gap-2 text-center">
+              {result.verdict_level && (
+                <div><div className="text-xs text-muted-foreground uppercase">Risk Level</div>
+                  <div className="text-sm font-bold mt-1">{result.verdict_level}</div></div>
+              )}
+              {result.confidence != null && (
+                <div><div className="text-xs text-muted-foreground uppercase">Confidence</div>
+                  <div className="text-sm font-bold mt-1">{result.confidence}%</div></div>
+              )}
+              {result.phishing_label && (
+                <div><div className="text-xs text-muted-foreground uppercase">Phishing</div>
+                  <div className={`text-sm font-bold mt-1 ${result.is_phishing ? "text-destructive" : "text-success"}`}>
+                    {result.is_phishing ? "Yes" : "No"}
+                  </div></div>
+              )}
+            </div>
+          )}
+
+          {result.recommendation && (
+            <div className="glass rounded-xl p-4">
+              <div className="text-xs font-mono text-primary mb-2">RECOMMENDATION</div>
+              <p className="text-sm leading-relaxed">{result.recommendation}</p>
+            </div>
+          )}
+
+          {result.red_flags?.length > 0 && (
+            <div className="glass rounded-xl p-4">
+              <div className="text-xs font-mono text-destructive mb-2">RED FLAGS</div>
+              <ul className="space-y-1 text-sm">
+                {result.red_flags.map((r: string, i: number) =>
+                  <li key={i} className="flex gap-2"><span className="text-destructive">▸</span>{r}</li>)}
+              </ul>
+            </div>
+          )}
+
           {result.heuristics?.reasons?.length > 0 && (
             <div className="glass rounded-xl p-4">
               <div className="text-xs font-mono text-primary mb-2">HEURISTIC FLAGS</div>
@@ -54,18 +91,28 @@ export default function UrlScan() {
           )}
           {result.virustotal && (
             <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-primary mb-2">VIRUSTOTAL</div>
+              <div className="text-xs font-mono text-primary mb-2">
+                VIRUSTOTAL {result.vt_status && result.vt_status !== "ok" ? `· ${result.vt_status}` : ""}
+              </div>
               <div className="grid grid-cols-4 gap-2 text-center text-xs">
                 <Stat label="Malicious" value={result.virustotal.malicious || 0} cls="text-destructive" />
                 <Stat label="Suspicious" value={result.virustotal.suspicious || 0} cls="text-warning" />
                 <Stat label="Harmless" value={result.virustotal.harmless || 0} cls="text-success" />
                 <Stat label="Undetected" value={result.virustotal.undetected || 0} cls="text-muted-foreground" />
               </div>
+              {result.virustotal.pending && (
+                <div className="text-xs text-warning mt-2">VirusTotal analysis is still pending — results may improve in a few minutes.</div>
+              )}
+            </div>
+          )}
+          {!result.virustotal && result.vt_status && (
+            <div className="glass rounded-xl p-3 text-xs text-warning">
+              VirusTotal lookup unavailable ({String(result.vt_status).replace(/_/g, " ")}). Result is based on heuristics and AI reasoning only.
             </div>
           )}
           {result.ai_analysis && (
             <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-accent mb-2">✨ GEMINI AI</div>
+              <div className="text-xs font-mono text-accent mb-2">✨ AI ANALYSIS</div>
               <p className="text-sm leading-relaxed">{result.ai_analysis}</p>
             </div>
           )}

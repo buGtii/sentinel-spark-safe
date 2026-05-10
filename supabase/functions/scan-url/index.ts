@@ -26,36 +26,94 @@ function isTrusted(host: string) {
   return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
+// Shannon entropy — high values suggest random/algorithmically-generated tokens.
+function entropy(s: string): number {
+  if (!s) return 0;
+  const freq: Record<string, number> = {};
+  for (const c of s) freq[c] = (freq[c] || 0) + 1;
+  let h = 0;
+  for (const k in freq) {
+    const p = freq[k] / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
 function urlHeuristics(raw: string) {
   const reasons: string[] = [];
   let score = 0;
   try {
     const u = new URL(raw);
     const host = u.hostname.toLowerCase();
+    const path = u.pathname || "";
     const trusted = isTrusted(host);
 
-    // Hard signals — these matter regardless.
+    // Hard signals — always count.
     if (/^(\d+\.){3}\d+$/.test(host)) { score += 35; reasons.push("Hosted on raw IP address (no domain)"); }
     if (looksHomograph(host)) { score += 25; reasons.push("Internationalized/punycode domain (possible homograph)"); }
     if (/@/.test(raw)) { score += 30; reasons.push("Contains '@' symbol (URL credentials trick)"); }
 
     if (!trusted) {
-      // Soft signals — only count for non-trusted hosts to avoid false positives on legit sites.
-      if (u.protocol !== "https:" && u.protocol !== "http:") { /* skip */ }
-      else if (u.protocol !== "https:") { score += 12; reasons.push("Insecure (no HTTPS)"); }
+      if (u.protocol === "http:") { score += 10; reasons.push("Insecure (no HTTPS)"); }
 
       if ((host.match(/-/g) || []).length >= 4) { score += 8; reasons.push("Excessive dashes in hostname"); }
 
-      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country"];
-      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
+      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country", ".xyz", ".top", ".click", ".rest", ".support"];
+      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 18; reasons.push("Suspicious / low-reputation TLD"); }
 
       const subs = host.split(".");
       if (subs.length > 5) { score += 10; reasons.push("Excessive subdomains (subdomain abuse)"); }
+
+      // Random/high-entropy subdomain (e.g. m8.bhy0908.com)
+      const labels = subs.slice(0, -2); // drop registrable + tld
+      const rootLabel = subs.length >= 2 ? subs[subs.length - 2] : "";
+      const hasDigitLetterMix = /[a-z]/.test(rootLabel) && /\d/.test(rootLabel);
+      // Short letter+digit labels like "bhy0908", "ax12kd9" are very common in disposable phishing/redirector domains.
+      if (rootLabel.length >= 5 && hasDigitLetterMix) {
+        const consonants = (rootLabel.match(/[bcdfghjklmnpqrstvwxyz]/gi) || []).length;
+        const vowels = (rootLabel.match(/[aeiou]/gi) || []).length;
+        const unpronounceable = vowels === 0 || consonants / Math.max(1, rootLabel.length) > 0.55;
+        if (entropy(rootLabel) >= 2.4 || unpronounceable) {
+          score += 24; reasons.push(`Random/auto-generated registrable label "${rootLabel}"`);
+        }
+      }
+      for (const lbl of labels) {
+        // Short numeric-prefixed subdomains like "m8", "a1", "c7" are classic disposable hosts.
+        if (/^[a-z]{1,3}\d+$/i.test(lbl)) {
+          score += 10; reasons.push(`Disposable-looking subdomain "${lbl}"`); break;
+        }
+        if (lbl.length >= 4 && entropy(lbl) >= 2.6 && /\d/.test(lbl) && /[a-z]/.test(lbl)) {
+          score += 12; reasons.push(`Random-looking subdomain "${lbl}"`); break;
+        }
+      }
+
+      // Opaque short-URL-style path (e.g. /s/NIam34tq) on a non-trusted host
+      const segments = path.split("/").filter(Boolean);
+      if (segments.length >= 1) {
+        const last = segments[segments.length - 1];
+        if (segments.length <= 3 && last.length >= 6 && last.length <= 16 &&
+            /^[A-Za-z0-9_-]+$/.test(last) && entropy(last) >= 2.8 &&
+            /[A-Z]/.test(last) && /[a-z]/.test(last) && /\d/.test(last) &&
+            !/\.(html?|php|aspx?)$/i.test(last)) {
+          score += 22; reasons.push(`Opaque short-link style slug "${last}" (possible redirector / one-time link)`);
+        } else if (segments.length <= 3 && last.length >= 6 && last.length <= 14 &&
+            /^[A-Za-z0-9_-]+$/.test(last) && entropy(last) >= 3.2 &&
+            !/\.(html?|php|aspx?)$/i.test(last)) {
+          score += 18; reasons.push("Opaque short-link style path (possible redirector / one-time link)");
+        }
+        if (/^(s|r|l|t|go|out|click|track|redir|redirect)$/i.test(segments[0]) && segments.length <= 3) {
+          score += 10; reasons.push("Path looks like a redirector endpoint");
+        }
+      }
+
 
       // Brand impersonation: brand keyword present but not on the official brand domain.
       const brands = ["paypal","apple","microsoft","google","amazon","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
       const impersonated = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.${k === "amazon" ? "in" : "org"}`));
       if (impersonated.length) { score += 28; reasons.push(`Possible brand impersonation: ${impersonated.join(", ")}`); }
+
+      // Very long hostname
+      if (host.length > 40) { score += 6; reasons.push("Unusually long hostname"); }
     }
   } catch {
     reasons.push("Invalid URL format");
@@ -64,22 +122,64 @@ function urlHeuristics(raw: string) {
   return { score: Math.min(100, score), reasons };
 }
 
+// fetch with timeout + simple retry/backoff
+async function fetchWithRetry(url: string, init: RequestInit, opts: { timeoutMs?: number; retries?: number } = {}) {
+  const { timeoutMs = 8000, retries = 2 } = opts;
+  let lastErr: any;
+  for (let i = 0; i <= retries; i++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { ...init, signal: ctrl.signal });
+      clearTimeout(t);
+      if (r.status === 429 || r.status >= 500) {
+        if (i < retries) { await new Promise(res => setTimeout(res, 400 * Math.pow(2, i))); continue; }
+      }
+      return r;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      if (i < retries) await new Promise(res => setTimeout(res, 400 * Math.pow(2, i)));
+    }
+  }
+  throw lastErr || new Error("network error");
+}
+
 async function virustotalUrl(url: string) {
-  if (!VT) return null;
+  if (!VT) return { error: "no_api_key" };
   try {
     const id = b64url(url);
-    const res = await fetch(`https://www.virustotal.com/api/v3/urls/${id}`, { headers: { "x-apikey": VT } });
+    const res = await fetchWithRetry(`https://www.virustotal.com/api/v3/urls/${id}`,
+      { headers: { "x-apikey": VT } }, { timeoutMs: 8000, retries: 2 });
     if (res.status === 404) {
+      // Submit for analysis, then poll once for a quick result.
       const form = new FormData();
       form.append("url", url);
-      await fetch("https://www.virustotal.com/api/v3/urls", { method: "POST", headers: { "x-apikey": VT }, body: form });
+      const sub = await fetchWithRetry("https://www.virustotal.com/api/v3/urls",
+        { method: "POST", headers: { "x-apikey": VT }, body: form }, { timeoutMs: 8000, retries: 1 }).catch(() => null);
+      const analysisId = sub && sub.ok ? (await sub.json())?.data?.id : null;
+      if (analysisId) {
+        await new Promise(r => setTimeout(r, 2500));
+        const poll = await fetchWithRetry(`https://www.virustotal.com/api/v3/analyses/${analysisId}`,
+          { headers: { "x-apikey": VT } }, { timeoutMs: 8000, retries: 1 }).catch(() => null);
+        if (poll && poll.ok) {
+          const d = await poll.json();
+          const stats = d?.data?.attributes?.stats;
+          if (stats && d?.data?.attributes?.status === "completed") {
+            return { malicious: stats.malicious || 0, suspicious: stats.suspicious || 0,
+                     harmless: stats.harmless || 0, undetected: stats.undetected || 0, pending: false };
+          }
+        }
+      }
       return { malicious: 0, suspicious: 0, harmless: 0, undetected: 0, pending: true };
     }
-    if (!res.ok) return null;
+    if (res.status === 429) return { error: "rate_limited" };
+    if (!res.ok) return { error: `http_${res.status}` };
     const data = await res.json();
     const stats = data?.data?.attributes?.last_analysis_stats || {};
-    return { ...stats, pending: false };
-  } catch { return null; }
+    const reputation = data?.data?.attributes?.reputation ?? null;
+    return { ...stats, reputation, pending: false };
+  } catch (e) { return { error: "network", detail: String(e) }; }
 }
 
 async function geminiAnalysis(url: string, heuristics: any, vt: any) {
@@ -146,48 +246,79 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const body = await req.json();
-    const { url, _prefs } = body || {};
+    let { url, _prefs } = body || {};
     const prefs = { useVirusTotal: true, useGemini: true, ..._prefs };
     if (!url || typeof url !== "string") {
       return new Response(JSON.stringify({ error: "url required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+    url = url.trim();
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try { new URL(url); } catch {
+      return new Response(JSON.stringify({
+        verdict: "unknown", risk_score: 0,
+        error_type: "invalid_url",
+        message: "That doesn't look like a valid URL. Please paste a full link starting with http(s)://",
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const heuristics = urlHeuristics(url);
-    const vt = prefs.useVirusTotal ? await virustotalUrl(url) : null;
+    const vtRaw = prefs.useVirusTotal ? await virustotalUrl(url) : null;
+    const vt = vtRaw && !("error" in vtRaw) ? vtRaw : null;
+    const vtError = vtRaw && "error" in vtRaw ? (vtRaw as any).error : null;
     const ai = prefs.useGemini ? await geminiAnalysis(url, heuristics, vt) : null;
 
-    // Blended scoring with VT trust override
+    // Blended scoring
     let score = heuristics.score;
-    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 1;
-    if (vt) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
+    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 3;
+    const vtPending = vt && vt.pending;
+    if (vt && !vt.pending) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
     if (ai?.risk_score != null) score = Math.round((score + ai.risk_score) / 2);
-    if (vtClean) score = Math.min(score, 12); // VT clean → cap to safe range
+    // Only cap to "safe" when VT is definitively clean AND heuristics didn't find hard signals.
+    if (vtClean && heuristics.score < 25) score = Math.min(score, 12);
     score = Math.max(0, Math.min(100, score));
 
+    // Verdict: never call something safe when VT is unavailable AND heuristics flagged hard signals.
     let verdict: string;
-    if (ai?.verdict && (ai.verdict === "safe" || ai.verdict === "malicious" || ai.verdict === "suspicious")) {
+    if (ai?.verdict && ["safe","suspicious","malicious"].includes(ai.verdict)) {
       verdict = ai.verdict;
-      if (vtClean && verdict !== "malicious") verdict = "safe";
+      if (vtClean && verdict !== "malicious" && heuristics.score < 25) verdict = "safe";
+      if (heuristics.score >= 50 && verdict === "safe") verdict = "suspicious";
     } else {
-      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : "safe";
+      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : score >= 15 ? "suspicious" : "safe";
     }
+    // If we have no VT signal and heuristics are noisy, mark suspicious rather than safe.
+    if (!vt && heuristics.score >= 25 && verdict === "safe") verdict = "suspicious";
+
+    const verdict_level =
+      score >= 85 ? "Highly Malicious" :
+      score >= 70 ? "Dangerous" :
+      score >= 45 ? "Suspicious" :
+      score >= 20 ? "Low Risk" :
+      verdict === "safe" ? "Safe" : "Needs Review";
+
     const isPhishing = verdict === "malicious" || verdict === "suspicious";
+    const confidence = ai?.confidence ?? (vt && !vt.pending ? 85 : vtPending ? 45 : 60);
 
     return new Response(JSON.stringify({
       verdict, risk_score: score,
+      verdict_level,
+      confidence,
       is_phishing: isPhishing,
       phishing_label: verdict === "malicious" ? "Phishing / Malicious"
         : verdict === "suspicious" ? "Potentially Phishing"
         : "Not Phishing — Legitimate",
       heuristics, virustotal: vt,
+      vt_status: vtError ? vtError : (vtPending ? "pending" : vt ? "ok" : "unavailable"),
       ai_analysis: ai?.explanation || null,
       explanation: ai?.explanation || null,
       recommendation: ai?.recommendation || null,
-      red_flags: (verdict === "safe" ? [] : (ai?.red_flags || heuristics.reasons)),
+      red_flags: (verdict === "safe" ? [] : (ai?.red_flags?.length ? ai.red_flags : heuristics.reasons)),
       category: ai?.category || null,
-      confidence: ai?.confidence ?? null,
       mitre_techniques: verdict === "safe" ? [] : (ai?.mitre_techniques || []),
+      normalized_url: url,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: String(e), message: "We couldn't complete the scan. Please try again." }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
