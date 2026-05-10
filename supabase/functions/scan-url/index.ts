@@ -130,21 +130,40 @@ async function fetchWithRetry(url: string, init: RequestInit, opts: { timeoutMs?
 }
 
 async function virustotalUrl(url: string) {
-  if (!VT) return null;
+  if (!VT) return { error: "no_api_key" };
   try {
     const id = b64url(url);
-    const res = await fetch(`https://www.virustotal.com/api/v3/urls/${id}`, { headers: { "x-apikey": VT } });
+    const res = await fetchWithRetry(`https://www.virustotal.com/api/v3/urls/${id}`,
+      { headers: { "x-apikey": VT } }, { timeoutMs: 8000, retries: 2 });
     if (res.status === 404) {
+      // Submit for analysis, then poll once for a quick result.
       const form = new FormData();
       form.append("url", url);
-      await fetch("https://www.virustotal.com/api/v3/urls", { method: "POST", headers: { "x-apikey": VT }, body: form });
+      const sub = await fetchWithRetry("https://www.virustotal.com/api/v3/urls",
+        { method: "POST", headers: { "x-apikey": VT }, body: form }, { timeoutMs: 8000, retries: 1 }).catch(() => null);
+      const analysisId = sub && sub.ok ? (await sub.json())?.data?.id : null;
+      if (analysisId) {
+        await new Promise(r => setTimeout(r, 2500));
+        const poll = await fetchWithRetry(`https://www.virustotal.com/api/v3/analyses/${analysisId}`,
+          { headers: { "x-apikey": VT } }, { timeoutMs: 8000, retries: 1 }).catch(() => null);
+        if (poll && poll.ok) {
+          const d = await poll.json();
+          const stats = d?.data?.attributes?.stats;
+          if (stats && d?.data?.attributes?.status === "completed") {
+            return { malicious: stats.malicious || 0, suspicious: stats.suspicious || 0,
+                     harmless: stats.harmless || 0, undetected: stats.undetected || 0, pending: false };
+          }
+        }
+      }
       return { malicious: 0, suspicious: 0, harmless: 0, undetected: 0, pending: true };
     }
-    if (!res.ok) return null;
+    if (res.status === 429) return { error: "rate_limited" };
+    if (!res.ok) return { error: `http_${res.status}` };
     const data = await res.json();
     const stats = data?.data?.attributes?.last_analysis_stats || {};
-    return { ...stats, pending: false };
-  } catch { return null; }
+    const reputation = data?.data?.attributes?.reputation ?? null;
+    return { ...stats, reputation, pending: false };
+  } catch (e) { return { error: "network", detail: String(e) }; }
 }
 
 async function geminiAnalysis(url: string, heuristics: any, vt: any) {
@@ -211,48 +230,79 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const body = await req.json();
-    const { url, _prefs } = body || {};
+    let { url, _prefs } = body || {};
     const prefs = { useVirusTotal: true, useGemini: true, ..._prefs };
     if (!url || typeof url !== "string") {
       return new Response(JSON.stringify({ error: "url required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
+    url = url.trim();
+    if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+    try { new URL(url); } catch {
+      return new Response(JSON.stringify({
+        verdict: "unknown", risk_score: 0,
+        error_type: "invalid_url",
+        message: "That doesn't look like a valid URL. Please paste a full link starting with http(s)://",
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     const heuristics = urlHeuristics(url);
-    const vt = prefs.useVirusTotal ? await virustotalUrl(url) : null;
+    const vtRaw = prefs.useVirusTotal ? await virustotalUrl(url) : null;
+    const vt = vtRaw && !("error" in vtRaw) ? vtRaw : null;
+    const vtError = vtRaw && "error" in vtRaw ? (vtRaw as any).error : null;
     const ai = prefs.useGemini ? await geminiAnalysis(url, heuristics, vt) : null;
 
-    // Blended scoring with VT trust override
+    // Blended scoring
     let score = heuristics.score;
-    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 1;
-    if (vt) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
+    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 3;
+    const vtPending = vt && vt.pending;
+    if (vt && !vt.pending) score += (vt.malicious || 0) * 18 + (vt.suspicious || 0) * 6;
     if (ai?.risk_score != null) score = Math.round((score + ai.risk_score) / 2);
-    if (vtClean) score = Math.min(score, 12); // VT clean → cap to safe range
+    // Only cap to "safe" when VT is definitively clean AND heuristics didn't find hard signals.
+    if (vtClean && heuristics.score < 25) score = Math.min(score, 12);
     score = Math.max(0, Math.min(100, score));
 
+    // Verdict: never call something safe when VT is unavailable AND heuristics flagged hard signals.
     let verdict: string;
-    if (ai?.verdict && (ai.verdict === "safe" || ai.verdict === "malicious" || ai.verdict === "suspicious")) {
+    if (ai?.verdict && ["safe","suspicious","malicious"].includes(ai.verdict)) {
       verdict = ai.verdict;
-      if (vtClean && verdict !== "malicious") verdict = "safe";
+      if (vtClean && verdict !== "malicious" && heuristics.score < 25) verdict = "safe";
+      if (heuristics.score >= 50 && verdict === "safe") verdict = "suspicious";
     } else {
-      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : "safe";
+      verdict = score >= 70 ? "malicious" : score >= 35 ? "suspicious" : score >= 15 ? "suspicious" : "safe";
     }
+    // If we have no VT signal and heuristics are noisy, mark suspicious rather than safe.
+    if (!vt && heuristics.score >= 25 && verdict === "safe") verdict = "suspicious";
+
+    const verdict_level =
+      score >= 85 ? "Highly Malicious" :
+      score >= 70 ? "Dangerous" :
+      score >= 45 ? "Suspicious" :
+      score >= 20 ? "Low Risk" :
+      verdict === "safe" ? "Safe" : "Needs Review";
+
     const isPhishing = verdict === "malicious" || verdict === "suspicious";
+    const confidence = ai?.confidence ?? (vt && !vt.pending ? 85 : vtPending ? 45 : 60);
 
     return new Response(JSON.stringify({
       verdict, risk_score: score,
+      verdict_level,
+      confidence,
       is_phishing: isPhishing,
       phishing_label: verdict === "malicious" ? "Phishing / Malicious"
         : verdict === "suspicious" ? "Potentially Phishing"
         : "Not Phishing — Legitimate",
       heuristics, virustotal: vt,
+      vt_status: vtError ? vtError : (vtPending ? "pending" : vt ? "ok" : "unavailable"),
       ai_analysis: ai?.explanation || null,
       explanation: ai?.explanation || null,
       recommendation: ai?.recommendation || null,
-      red_flags: (verdict === "safe" ? [] : (ai?.red_flags || heuristics.reasons)),
+      red_flags: (verdict === "safe" ? [] : (ai?.red_flags?.length ? ai.red_flags : heuristics.reasons)),
       category: ai?.category || null,
-      confidence: ai?.confidence ?? null,
       mitre_techniques: verdict === "safe" ? [] : (ai?.mitre_techniques || []),
+      normalized_url: url,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ error: String(e), message: "We couldn't complete the scan. Please try again." }),
+      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 });
