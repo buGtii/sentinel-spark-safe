@@ -26,42 +26,107 @@ function isTrusted(host: string) {
   return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
+// Shannon entropy — high values suggest random/algorithmically-generated tokens.
+function entropy(s: string): number {
+  if (!s) return 0;
+  const freq: Record<string, number> = {};
+  for (const c of s) freq[c] = (freq[c] || 0) + 1;
+  let h = 0;
+  for (const k in freq) {
+    const p = freq[k] / s.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
 function urlHeuristics(raw: string) {
   const reasons: string[] = [];
   let score = 0;
   try {
     const u = new URL(raw);
     const host = u.hostname.toLowerCase();
+    const path = u.pathname || "";
     const trusted = isTrusted(host);
 
-    // Hard signals — these matter regardless.
+    // Hard signals — always count.
     if (/^(\d+\.){3}\d+$/.test(host)) { score += 35; reasons.push("Hosted on raw IP address (no domain)"); }
     if (looksHomograph(host)) { score += 25; reasons.push("Internationalized/punycode domain (possible homograph)"); }
     if (/@/.test(raw)) { score += 30; reasons.push("Contains '@' symbol (URL credentials trick)"); }
 
     if (!trusted) {
-      // Soft signals — only count for non-trusted hosts to avoid false positives on legit sites.
-      if (u.protocol !== "https:" && u.protocol !== "http:") { /* skip */ }
-      else if (u.protocol !== "https:") { score += 12; reasons.push("Insecure (no HTTPS)"); }
+      if (u.protocol === "http:") { score += 10; reasons.push("Insecure (no HTTPS)"); }
 
       if ((host.match(/-/g) || []).length >= 4) { score += 8; reasons.push("Excessive dashes in hostname"); }
 
-      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country"];
-      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 22; reasons.push("Suspicious TLD"); }
+      const suspiciousTlds = [".zip", ".mov", ".tk", ".gq", ".ml", ".cf", ".work", ".loan", ".country", ".xyz", ".top", ".click", ".rest", ".support"];
+      if (suspiciousTlds.some(t => host.endsWith(t))) { score += 18; reasons.push("Suspicious / low-reputation TLD"); }
 
       const subs = host.split(".");
       if (subs.length > 5) { score += 10; reasons.push("Excessive subdomains (subdomain abuse)"); }
+
+      // Random/high-entropy subdomain (e.g. m8.bhy0908.com)
+      const labels = subs.slice(0, -2); // drop registrable + tld
+      const rootLabel = subs.length >= 2 ? subs[subs.length - 2] : "";
+      const hasDigitLetterMix = /[a-z]/.test(rootLabel) && /\d/.test(rootLabel);
+      if (rootLabel.length >= 5 && entropy(rootLabel) >= 3.0 && hasDigitLetterMix) {
+        score += 22; reasons.push(`High-entropy domain label "${rootLabel}" (looks auto-generated)`);
+      }
+      for (const lbl of labels) {
+        if (lbl.length >= 4 && entropy(lbl) >= 2.8 && /\d/.test(lbl) && /[a-z]/.test(lbl)) {
+          score += 10; reasons.push(`Random-looking subdomain "${lbl}"`); break;
+        }
+      }
+
+      // Opaque short-URL-style path (e.g. /s/NIam34tq) on a non-trusted host
+      const segments = path.split("/").filter(Boolean);
+      if (segments.length >= 1) {
+        const last = segments[segments.length - 1];
+        if (segments.length <= 3 && last.length >= 6 && last.length <= 14 &&
+            /^[A-Za-z0-9_-]+$/.test(last) && entropy(last) >= 3.2 &&
+            !/\.(html?|php|aspx?)$/i.test(last)) {
+          score += 18; reasons.push("Opaque short-link style path (possible redirector / one-time link)");
+        }
+        if (/^(s|r|l|t|go|out|click|track|redir|redirect)$/i.test(segments[0]) && segments.length <= 3) {
+          score += 8; reasons.push("Path looks like a redirector endpoint");
+        }
+      }
 
       // Brand impersonation: brand keyword present but not on the official brand domain.
       const brands = ["paypal","apple","microsoft","google","amazon","netflix","facebook","instagram","whatsapp","binance","metamask","coinbase"];
       const impersonated = brands.filter(k => host.includes(k) && !host.endsWith(`${k}.com`) && !host.endsWith(`${k}.${k === "amazon" ? "in" : "org"}`));
       if (impersonated.length) { score += 28; reasons.push(`Possible brand impersonation: ${impersonated.join(", ")}`); }
+
+      // Very long hostname
+      if (host.length > 40) { score += 6; reasons.push("Unusually long hostname"); }
     }
   } catch {
     reasons.push("Invalid URL format");
     score = 40;
   }
   return { score: Math.min(100, score), reasons };
+}
+
+// fetch with timeout + simple retry/backoff
+async function fetchWithRetry(url: string, init: RequestInit, opts: { timeoutMs?: number; retries?: number } = {}) {
+  const { timeoutMs = 8000, retries = 2 } = opts;
+  let lastErr: any;
+  for (let i = 0; i <= retries; i++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const r = await fetch(url, { ...init, signal: ctrl.signal });
+      clearTimeout(t);
+      if (r.status === 429 || r.status >= 500) {
+        if (i < retries) { await new Promise(res => setTimeout(res, 400 * Math.pow(2, i))); continue; }
+      }
+      return r;
+    } catch (e) {
+      clearTimeout(t);
+      lastErr = e;
+      if (i < retries) await new Promise(res => setTimeout(res, 400 * Math.pow(2, i)));
+    }
+  }
+  throw lastErr || new Error("network error");
 }
 
 async function virustotalUrl(url: string) {
