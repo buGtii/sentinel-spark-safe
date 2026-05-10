@@ -10,6 +10,43 @@ import { VerdictBadge } from "@/components/VerdictBadge";
 
 type ScanStatus = "idle" | "reading" | "found" | "scanning" | "not-found" | "camera-error";
 
+type DecodeAttempt = {
+  pass: string;
+  engine: "zxing" | "jsqr";
+  durationMs: number;
+  success: boolean;
+  width?: number;
+  height?: number;
+};
+
+type Diagnostics = {
+  source: "image" | "camera";
+  fileName?: string;
+  fileSize?: number;
+  fileType?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  totalMs: number;
+  attempts: DecodeAttempt[];
+  decodedBy?: "zxing" | "jsqr" | "camera-zxing";
+  payloadType: "url" | "text" | "wifi" | "tel" | "sms" | "email" | "geo" | "vcard" | "unknown";
+  payloadLength: number;
+  startedAt: string;
+};
+
+function classifyPayload(payload: string): Diagnostics["payloadType"] {
+  const p = payload.trim();
+  if (/^https?:\/\//i.test(p)) return "url";
+  if (/^WIFI:/i.test(p)) return "wifi";
+  if (/^tel:/i.test(p)) return "tel";
+  if (/^sms(to)?:/i.test(p)) return "sms";
+  if (/^mailto:/i.test(p)) return "email";
+  if (/^geo:/i.test(p)) return "geo";
+  if (/^BEGIN:VCARD/i.test(p)) return "vcard";
+  if (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(p)) return "url";
+  return "text";
+}
+
 const qrHints = new Map<DecodeHintType, unknown>([
   [DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]],
   [DecodeHintType.TRY_HARDER, true],
