@@ -11,24 +11,24 @@ type Category = typeof CATEGORIES[number];
 async function encryptBytes(pass: string, bytes: Uint8Array) {
   const enc = new TextEncoder();
   const salt = enc.encode("cybersmart-vault-v1");
-  const km = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+  const km = await crypto.subtle.importKey("raw", enc.encode(pass) as BufferSource, "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt as BufferSource, iterations: 200_000, hash: "SHA-256" },
     km, { name: "AES-GCM", length: 256 }, false, ["encrypt","decrypt"],
   );
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
+  const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, bytes as BufferSource);
   return { ct: new Uint8Array(ct), iv };
 }
 async function decryptBytes(pass: string, ct: Uint8Array, iv: Uint8Array) {
   const enc = new TextEncoder();
   const salt = enc.encode("cybersmart-vault-v1");
-  const km = await crypto.subtle.importKey("raw", enc.encode(pass), "PBKDF2", false, ["deriveKey"]);
+  const km = await crypto.subtle.importKey("raw", enc.encode(pass) as BufferSource, "PBKDF2", false, ["deriveKey"]);
   const key = await crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt: salt as BufferSource, iterations: 200_000, hash: "SHA-256" },
     km, { name: "AES-GCM", length: 256 }, false, ["encrypt","decrypt"],
   );
-  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct));
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: iv as BufferSource }, key, ct as BufferSource));
 }
 
 export default function Vault() {
