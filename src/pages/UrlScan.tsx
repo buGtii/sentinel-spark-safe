@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { runScan, persistScan } from "@/lib/scans";
 import { VerdictBadge } from "@/components/VerdictBadge";
+import { VerdictPanel } from "@/components/VerdictPanel";
 import { MitreMapping } from "@/components/MitreMapping";
 import { Loader2, Link2 } from "lucide-react";
 import { toast } from "sonner";
@@ -42,7 +43,16 @@ export default function UrlScan() {
 
       {result && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-3">
-          <VerdictBadge verdict={result.verdict} score={result.risk_score} />
+          <VerdictPanel
+            verdict={result.verdict}
+            verdict_level={result.verdict_level}
+            risk_score={result.risk_score}
+            confidence={result.confidence}
+            recommendation={result.recommendation}
+            explanation={result.explanation || result.ai_analysis}
+            red_flags={result.red_flags}
+            layers={result.layers}
+          />
 
           {(result.verdict_level || result.confidence != null || result.phishing_label) && (
             <div className="glass rounded-xl p-4 grid grid-cols-3 gap-2 text-center">
