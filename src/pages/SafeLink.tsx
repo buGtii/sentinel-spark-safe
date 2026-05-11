@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { addXp } from "@/lib/gamify";
 
 const CACHE_KEY = "cybersmart.linkguard.cache";
-type CacheEntry = { verdict: string; risk_score: number; at: number };
+type CacheEntry = { verdict: string; risk_score: number; confidence?: number; at: number };
 const TTL = 1000 * 60 * 30; // 30 min
 
 function readCache(): Record<string, CacheEntry> {
