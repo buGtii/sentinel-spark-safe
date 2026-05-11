@@ -443,13 +443,20 @@ export default function QRScan() {
           <div className="flex items-start gap-3">
             <RotateCcw className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div className="space-y-1 text-left">
-              <div className="text-sm font-semibold">QR not readable yet</div>
+              <div className="text-sm font-semibold">
+                {status === "camera-error" ? "Camera unavailable" : "QR not readable yet"}
+              </div>
               <p className="text-xs text-muted-foreground leading-relaxed">{lastError}</p>
+              {status === "camera-error" && (
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Tip: on Android, allow Camera in app permissions. On iOS, allow Camera for the browser/app.
+                </p>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="secondary" onClick={() => galleryRef.current?.click()} disabled={busy}>Upload another</Button>
-            <Button variant="outline" onClick={startCamera} disabled={busy}>Try live scan</Button>
+            <Button variant="secondary" onClick={() => galleryRef.current?.click()} disabled={busy}>Upload image</Button>
+            <Button variant="outline" onClick={() => cameraFileRef.current?.click()} disabled={busy}>Take photo</Button>
           </div>
         </div>
       )}
