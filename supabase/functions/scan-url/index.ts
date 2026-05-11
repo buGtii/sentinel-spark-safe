@@ -318,23 +318,27 @@ Deno.serve(async (req) => {
     const trusted = isTrusted(host);
     const { score: blendedScore, confidence: confCoverage } = blend(layers);
 
-    // Final score with safety caps
+    // Final score with safety caps — trusted/clean wins over noisy single-vendor VT detections.
     let score = blendedScore;
+    const vtMal = vt && !vt.pending ? (vt.malicious || 0) : 0;
+    const vtHarm = vt && !vt.pending ? (vt.harmless || 0) : 0;
+    const vtClean = vt && !vt.pending && vtMal === 0 && (vt.suspicious ?? 0) === 0 && vtHarm >= 3;
+    const noisyFp = vtMal === 1 && vtHarm >= 20;
     if (trusted) score = Math.min(score, 8);
-    // If VT is definitively clean and heuristics are mild, hold near safe
-    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 3;
     if (vtClean && heur.score < 30) score = Math.min(score, 15);
+    if (noisyFp && heur.score < 30) score = Math.min(score, 25);
     score = Math.max(0, Math.min(100, score));
 
-    // Verdict — 6 levels
+    // Verdict — 6 levels. Require >=2 VT detections for "hardMalicious" — single-vendor flags are false-positive-prone.
     let verdict_level: string;
     let verdict: "safe"|"suspicious"|"malicious"|"unknown";
-    const hardMalicious = (vt && !vt.pending && (vt.malicious || 0) >= 1) || heur.score >= 70;
+    const hardMalicious = !trusted && ((vt && !vt.pending && vtMal >= 2) || heur.score >= 70);
     if (hardMalicious || score >= 80) { verdict_level = "Malicious"; verdict = "malicious"; }
     else if (score >= 60) { verdict_level = "High Risk"; verdict = "malicious"; }
     else if (score >= 40) { verdict_level = "Suspicious"; verdict = "suspicious"; }
+    else if (trusted) { verdict_level = "Trusted"; verdict = "safe"; }
     else if (score >= 20) { verdict_level = "Unknown"; verdict = "suspicious"; }
-    else if (trusted || vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
+    else if (vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
     else { verdict_level = "Likely Safe"; verdict = "safe"; }
 
     // Confidence — blend AI confidence with layer coverage
