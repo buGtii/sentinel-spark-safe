@@ -73,32 +73,6 @@ export default function UrlScan() {
             </div>
           )}
 
-          {result.recommendation && (
-            <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-primary mb-2">RECOMMENDATION</div>
-              <p className="text-sm leading-relaxed">{result.recommendation}</p>
-            </div>
-          )}
-
-          {result.red_flags?.length > 0 && (
-            <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-destructive mb-2">RED FLAGS</div>
-              <ul className="space-y-1 text-sm">
-                {result.red_flags.map((r: string, i: number) =>
-                  <li key={i} className="flex gap-2"><span className="text-destructive">▸</span>{r}</li>)}
-              </ul>
-            </div>
-          )}
-
-          {result.heuristics?.reasons?.length > 0 && (
-            <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-primary mb-2">HEURISTIC FLAGS</div>
-              <ul className="space-y-1 text-sm">
-                {result.heuristics.reasons.map((r: string, i: number) =>
-                  <li key={i} className="flex gap-2"><span className="text-warning">▸</span>{r}</li>)}
-              </ul>
-            </div>
-          )}
           {result.virustotal && (
             <div className="glass rounded-xl p-4">
               <div className="text-xs font-mono text-primary mb-2">
@@ -118,12 +92,6 @@ export default function UrlScan() {
           {!result.virustotal && result.vt_status && (
             <div className="glass rounded-xl p-3 text-xs text-warning">
               VirusTotal lookup unavailable ({String(result.vt_status).replace(/_/g, " ")}). Result is based on heuristics and AI reasoning only.
-            </div>
-          )}
-          {result.ai_analysis && (
-            <div className="glass rounded-xl p-4">
-              <div className="text-xs font-mono text-accent mb-2">✨ AI ANALYSIS</div>
-              <p className="text-sm leading-relaxed">{result.ai_analysis}</p>
             </div>
           )}
           <MitreMapping techniques={result.mitre_techniques} />
