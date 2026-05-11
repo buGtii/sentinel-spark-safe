@@ -160,14 +160,27 @@ function virustotalLayer(vt: any): Layer {
       status: "unknown" };
   }
   const mal = vt.malicious || 0, sus = vt.suspicious || 0, harm = vt.harmless || 0;
-  const score = Math.min(100, mal * 25 + sus * 8);
+  const totalVerdicts = mal + sus + harm + (vt.undetected || 0);
+  // Ratio-aware scoring: a single vendor flagging a URL that 50+ others mark harmless is almost always a false positive.
+  const malRatio = totalVerdicts > 0 ? mal / totalVerdicts : 0;
+  const noisySingleFp = mal === 1 && harm >= 20;
+  let score: number;
+  if (noisySingleFp) score = 10;
+  else if (mal >= 5) score = Math.min(100, 60 + mal * 6 + sus * 4);
+  else if (mal >= 2) score = Math.min(100, 35 + mal * 8 + sus * 4);
+  else if (mal === 1) score = Math.min(35, 18 + sus * 4);
+  else score = Math.min(40, sus * 8);
   const evidence: string[] = [];
-  if (mal > 0) evidence.push(`${mal} security vendors flagged this URL as malicious`);
-  if (sus > 0) evidence.push(`${sus} vendors marked it suspicious`);
-  if (harm > 0 && mal === 0 && sus === 0) evidence.push(`${harm} vendors marked it harmless`);
-  return { name: "VirusTotal", score, weight: 0.35, evidence,
-    status: mal > 0 ? "bad" : sus > 0 ? "warn" : "ok" };
+  if (mal > 0) {
+    evidence.push(`${mal} security vendor${mal > 1 ? "s" : ""} flagged this URL as malicious (out of ${totalVerdicts})`);
+    if (noisySingleFp) evidence.push(`Likely a false positive — ${harm} vendors mark it harmless and only 1 disagrees`);
+  }
+  if (sus > 0) evidence.push(`${sus} vendor${sus > 1 ? "s" : ""} marked it suspicious`);
+  if (harm > 0 && mal === 0 && sus === 0) evidence.push(`${harm} vendors mark it harmless`);
+  const status: Layer["status"] = mal >= 2 ? "bad" : (mal === 1 && !noisySingleFp) || sus > 0 ? "warn" : "ok";
+  return { name: "VirusTotal", score, weight: 0.30, evidence, status };
 }
+
 
 // Domain age via RDAP (no API key needed)
 async function rdapAgeLayer(host: string): Promise<Layer> {
