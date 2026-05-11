@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { addXp } from "@/lib/gamify";
 
 const CACHE_KEY = "cybersmart.linkguard.cache";
-type CacheEntry = { verdict: string; risk_score: number; at: number };
+type CacheEntry = { verdict: string; risk_score: number; confidence?: number; at: number };
 const TTL = 1000 * 60 * 30; // 30 min
 
 function readCache(): Record<string, CacheEntry> {
@@ -38,23 +38,24 @@ export default function SafeLink() {
       const cache = readCache();
       const cached = cache[normalized];
       if (cached && Date.now() - cached.at < TTL) {
-        setResult({ verdict: cached.verdict, risk_score: cached.risk_score, _cached: true });
-        maybeAutoOpen(normalized, cached.verdict);
+        setResult({ verdict: cached.verdict, risk_score: cached.risk_score, confidence: cached.confidence, _cached: true });
+        maybeAutoOpen(normalized, cached.verdict, cached.risk_score, cached.confidence ?? 0);
         return;
       }
       const r = await runScan("url", { url: normalized });
       setResult(r);
-      cache[normalized] = { verdict: r.verdict, risk_score: r.risk_score, at: Date.now() };
+      cache[normalized] = { verdict: r.verdict, risk_score: r.risk_score, confidence: r.confidence, at: Date.now() };
       writeCache(cache);
       await persistScan({ type: "url", target: normalized, verdict: r.verdict, risk_score: r.risk_score, details: r });
       addXp(5, "link-guard");
-      maybeAutoOpen(normalized, r.verdict);
+      maybeAutoOpen(normalized, r.verdict, r.risk_score, r.confidence ?? 0);
     } catch (e: any) { toast.error(e.message); }
     finally { setBusy(false); }
   }
 
-  function maybeAutoOpen(target: string, verdict: string) {
-    if (verdict === "safe") {
+  function maybeAutoOpen(target: string, verdict: string, score = 0, confidence = 0) {
+    // Only auto-open when the link is clearly safe — verdict safe, low risk, decent confidence.
+    if (verdict === "safe" && score <= 15 && confidence >= 50) {
       let s = 3;
       setCountdown(s);
       const t = setInterval(() => {

@@ -92,7 +92,21 @@ Deno.serve(async (req) => {
     }
 
     let score = 0;
-    if (stats) score = Math.min(100, (stats.malicious || 0) * 20 + (stats.suspicious || 0) * 8);
+    let noisyFp = false;
+    if (stats) {
+      const mal = stats.malicious || 0;
+      const sus = stats.suspicious || 0;
+      const harm = stats.harmless || 0;
+      const total = mal + sus + harm + (stats.undetected || 0);
+      noisyFp = mal === 1 && harm >= 20;
+      if (noisyFp) score = 8;
+      else if (mal >= 5) score = Math.min(100, 60 + mal * 5);
+      else if (mal >= 2) score = Math.min(100, 30 + mal * 8 + sus * 3);
+      else if (mal === 1) score = 18 + sus * 3;
+      else score = Math.min(30, sus * 6);
+      // hard cap when overwhelmingly clean
+      if (mal === 0 && sus === 0 && harm >= 10) score = Math.min(score, 5);
+    }
     const verdict = score >= 60 ? "malicious" : score >= 30 ? "suspicious" : score > 0 ? "suspicious" : "safe";
     const verdict_level =
       score >= 85 ? "Highly Malicious" :
@@ -103,7 +117,11 @@ Deno.serve(async (req) => {
     return respond({ verdict, risk_score: score, verdict_level,
       virustotal: stats, country, asn, vt_status,
       confidence: stats ? 85 : 45,
-      message: stats ? null : "Reputation data is currently unavailable; the result is based on limited information." });
+      noisy_false_positive: noisyFp,
+      message: stats
+        ? (noisyFp ? `Only 1 of many vendors flagged this IP while ${stats.harmless} marked it harmless — likely a false positive.` : null)
+        : "Reputation data is currently unavailable; the result is based on limited information." });
+
   } catch (e) {
     return respond({ verdict: "unknown", risk_score: 0, error_type: "internal",
       message: "We couldn't complete the scan. Please try again." });

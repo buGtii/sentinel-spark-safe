@@ -18,6 +18,16 @@ const TRUSTED_SUFFIXES = [
   "lovable.dev","supabase.co","supabase.com","vercel.app","netlify.app","github.io","mozilla.org",
   "yahoo.com","duckduckgo.com","zoom.us","slack.com","discord.com","discord.gg","t.me","telegram.org",
   "drive.google.com","docs.google.com","maps.google.com","play.google.com","limeox.com",
+  // Common legit business/tooling domains often misflagged
+  "shopify.com","wordpress.com","wordpress.org","medium.com","substack.com","notion.so","airtable.com",
+  "figma.com","canva.com","dropbox.com","box.com","onedrive.live.com","sharepoint.com","adobe.com",
+  "atlassian.com","trello.com","asana.com","monday.com","intercom.com","zendesk.com","hubspot.com",
+  "salesforce.com","mailchimp.com","sendgrid.com","twilio.com","cloudfront.net","akamai.net","fastly.net",
+  "ebay.com","walmart.com","target.com","bestbuy.com","etsy.com","alibaba.com","aliexpress.com",
+  "flipkart.com","myntra.com","booking.com","airbnb.com","uber.com","lyft.com","doordash.com",
+  "nytimes.com","bbc.com","bbc.co.uk","cnn.com","reuters.com","bloomberg.com","forbes.com",
+  "wikipedia.org","wiktionary.org","archive.org","stackexchange.com","quora.com","pinterest.com",
+  "tumblr.com","tiktok.com","snapchat.com","twitch.tv","vimeo.com","soundcloud.com",
 ];
 function isTrusted(host: string) {
   return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
@@ -321,12 +331,22 @@ Deno.serve(async (req) => {
     // Final score with safety caps — trusted/clean wins over noisy single-vendor VT detections.
     let score = blendedScore;
     const vtMal = vt && !vt.pending ? (vt.malicious || 0) : 0;
+    const vtSus = vt && !vt.pending ? (vt.suspicious || 0) : 0;
     const vtHarm = vt && !vt.pending ? (vt.harmless || 0) : 0;
-    const vtClean = vt && !vt.pending && vtMal === 0 && (vt.suspicious ?? 0) === 0 && vtHarm >= 3;
+    const vtClean = vt && !vt.pending && vtMal === 0 && vtSus === 0 && vtHarm >= 3;
+    const vtStrongClean = vt && !vt.pending && vtMal === 0 && vtSus === 0 && vtHarm >= 10;
     const noisyFp = vtMal === 1 && vtHarm >= 20;
+    const noHeurFlags = heur.score < 20;
+
     if (trusted) score = Math.min(score, 8);
-    if (vtClean && heur.score < 30) score = Math.min(score, 15);
+    if (vtClean && noHeurFlags) score = Math.min(score, 15);
+    if (vtStrongClean && noHeurFlags) score = Math.min(score, 10); // strong evidence of legitimacy
     if (noisyFp && heur.score < 30) score = Math.min(score, 25);
+    // If AI hallucinated malicious but no other layer agrees, suppress it.
+    const otherLayersClean = vtMal < 2 && heur.score < 40 && (rdap.status !== "bad");
+    if (aiLayer.status === "bad" && otherLayersClean) {
+      score = Math.min(score, 35);
+    }
     score = Math.max(0, Math.min(100, score));
 
     // Verdict — 6 levels. Require >=2 VT detections for "hardMalicious" — single-vendor flags are false-positive-prone.
@@ -335,11 +355,13 @@ Deno.serve(async (req) => {
     const hardMalicious = !trusted && ((vt && !vt.pending && vtMal >= 2) || heur.score >= 70);
     if (hardMalicious || score >= 80) { verdict_level = "Malicious"; verdict = "malicious"; }
     else if (score >= 60) { verdict_level = "High Risk"; verdict = "malicious"; }
-    else if (score >= 40) { verdict_level = "Suspicious"; verdict = "suspicious"; }
+    else if (score >= 40 && !vtStrongClean) { verdict_level = "Suspicious"; verdict = "suspicious"; }
     else if (trusted) { verdict_level = "Trusted"; verdict = "safe"; }
-    else if (score >= 20) { verdict_level = "Unknown"; verdict = "suspicious"; }
-    else if (vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
+    else if (vtStrongClean && noHeurFlags) { verdict_level = "Likely Safe"; verdict = "safe"; }
+    else if (score >= 20 && !vtClean) { verdict_level = "Unknown"; verdict = "suspicious"; }
+    else if (vtClean) { verdict_level = "Likely Safe"; verdict = "safe"; }
     else { verdict_level = "Likely Safe"; verdict = "safe"; }
+
 
     // Confidence — blend AI confidence with layer coverage
     const aiConf = ai?.confidence ?? 50;
