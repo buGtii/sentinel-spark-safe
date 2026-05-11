@@ -227,7 +227,7 @@ async function geminiLayer(url: string, layers: Layer[]): Promise<{ layer: Layer
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "You are a cautious cybersecurity analyst. EVIDENCE-ONLY. Do NOT assume malice from an unfamiliar brand name or new domain alone. If layers contain no strong negative signal, return verdict='safe' or 'unknown' with low risk. Only return 'malicious' when at least one of: VirusTotal malicious>=1, raw-IP host, brand impersonation in hostname, homograph, or 3+ strong heuristic flags. Never invent details that aren't in the evidence. Output structured JSON via the tool." },
+          { role: "system", content: "You are a cautious cybersecurity analyst. EVIDENCE-ONLY: every number, vendor count or claim in your response MUST come from the layer evidence below — NEVER invent vendor counts, statistics, or breaches. If a single VirusTotal vendor (1/many) flags a URL while 20+ mark it harmless, treat it as a likely false positive and DO NOT call it malicious. Mark 'malicious' only when: VirusTotal malicious >= 2, OR raw-IP host, OR clear brand impersonation in hostname, OR homograph/punycode, OR 3+ strong heuristic flags. For unfamiliar but otherwise-clean domains, prefer verdict='safe' with confidence 50-70 over alarmist 'suspicious'. Quote the actual numbers from the evidence (e.g. '1 of 93 vendors flagged'). Output structured JSON via the tool." },
           { role: "user", content: `URL: ${url}\n\nLayer evidence:\n${summary}` },
         ],
         tools: [{ type: "function", function: { name: "report_url_analysis", parameters: {
