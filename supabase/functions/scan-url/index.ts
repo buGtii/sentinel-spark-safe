@@ -331,12 +331,22 @@ Deno.serve(async (req) => {
     // Final score with safety caps — trusted/clean wins over noisy single-vendor VT detections.
     let score = blendedScore;
     const vtMal = vt && !vt.pending ? (vt.malicious || 0) : 0;
+    const vtSus = vt && !vt.pending ? (vt.suspicious || 0) : 0;
     const vtHarm = vt && !vt.pending ? (vt.harmless || 0) : 0;
-    const vtClean = vt && !vt.pending && vtMal === 0 && (vt.suspicious ?? 0) === 0 && vtHarm >= 3;
+    const vtClean = vt && !vt.pending && vtMal === 0 && vtSus === 0 && vtHarm >= 3;
+    const vtStrongClean = vt && !vt.pending && vtMal === 0 && vtSus === 0 && vtHarm >= 10;
     const noisyFp = vtMal === 1 && vtHarm >= 20;
+    const noHeurFlags = heur.score < 20;
+
     if (trusted) score = Math.min(score, 8);
-    if (vtClean && heur.score < 30) score = Math.min(score, 15);
+    if (vtClean && noHeurFlags) score = Math.min(score, 15);
+    if (vtStrongClean && noHeurFlags) score = Math.min(score, 10); // strong evidence of legitimacy
     if (noisyFp && heur.score < 30) score = Math.min(score, 25);
+    // If AI hallucinated malicious but no other layer agrees, suppress it.
+    const otherLayersClean = vtMal < 2 && heur.score < 40 && (rdap.status !== "bad");
+    if (aiLayer.status === "bad" && otherLayersClean) {
+      score = Math.min(score, 35);
+    }
     score = Math.max(0, Math.min(100, score));
 
     // Verdict — 6 levels. Require >=2 VT detections for "hardMalicious" — single-vendor flags are false-positive-prone.
@@ -345,11 +355,13 @@ Deno.serve(async (req) => {
     const hardMalicious = !trusted && ((vt && !vt.pending && vtMal >= 2) || heur.score >= 70);
     if (hardMalicious || score >= 80) { verdict_level = "Malicious"; verdict = "malicious"; }
     else if (score >= 60) { verdict_level = "High Risk"; verdict = "malicious"; }
-    else if (score >= 40) { verdict_level = "Suspicious"; verdict = "suspicious"; }
+    else if (score >= 40 && !vtStrongClean) { verdict_level = "Suspicious"; verdict = "suspicious"; }
     else if (trusted) { verdict_level = "Trusted"; verdict = "safe"; }
-    else if (score >= 20) { verdict_level = "Unknown"; verdict = "suspicious"; }
-    else if (vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
+    else if (vtStrongClean && noHeurFlags) { verdict_level = "Likely Safe"; verdict = "safe"; }
+    else if (score >= 20 && !vtClean) { verdict_level = "Unknown"; verdict = "suspicious"; }
+    else if (vtClean) { verdict_level = "Likely Safe"; verdict = "safe"; }
     else { verdict_level = "Likely Safe"; verdict = "safe"; }
+
 
     // Confidence — blend AI confidence with layer coverage
     const aiConf = ai?.confidence ?? 50;
