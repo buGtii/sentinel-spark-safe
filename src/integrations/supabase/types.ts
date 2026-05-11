@@ -302,31 +302,43 @@ export type Database = {
       }
       vault_items: {
         Row: {
+          category: string
           ciphertext: string
           created_at: string
           id: string
           iv: string
           kind: string
+          mime_type: string | null
+          size_bytes: number | null
+          storage_path: string | null
           title: string
           updated_at: string
           user_id: string
         }
         Insert: {
+          category?: string
           ciphertext: string
           created_at?: string
           id?: string
           iv: string
           kind?: string
+          mime_type?: string | null
+          size_bytes?: number | null
+          storage_path?: string | null
           title: string
           updated_at?: string
           user_id: string
         }
         Update: {
+          category?: string
           ciphertext?: string
           created_at?: string
           id?: string
           iv?: string
           kind?: string
+          mime_type?: string | null
+          size_bytes?: number | null
+          storage_path?: string | null
           title?: string
           updated_at?: string
           user_id?: string

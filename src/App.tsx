@@ -40,6 +40,7 @@ import NotFound from "./pages/NotFound.tsx";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { installLinkGuard } from "@/lib/linkGuard";
+import { Onboarding } from "@/components/Onboarding";
 
 function LinkGuardBridge() {
   const nav = useNavigate();
@@ -53,7 +54,7 @@ function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading...</div>;
   if (!user) return <Navigate to="/auth" replace />;
-  return <AppShell>{children}</AppShell>;
+  return <AppShell><Onboarding />{children}</AppShell>;
 }
 
 const App = () => (
