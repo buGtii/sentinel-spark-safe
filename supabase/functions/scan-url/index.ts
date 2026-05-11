@@ -160,14 +160,27 @@ function virustotalLayer(vt: any): Layer {
       status: "unknown" };
   }
   const mal = vt.malicious || 0, sus = vt.suspicious || 0, harm = vt.harmless || 0;
-  const score = Math.min(100, mal * 25 + sus * 8);
+  const totalVerdicts = mal + sus + harm + (vt.undetected || 0);
+  // Ratio-aware scoring: a single vendor flagging a URL that 50+ others mark harmless is almost always a false positive.
+  const malRatio = totalVerdicts > 0 ? mal / totalVerdicts : 0;
+  const noisySingleFp = mal === 1 && harm >= 20;
+  let score: number;
+  if (noisySingleFp) score = 10;
+  else if (mal >= 5) score = Math.min(100, 60 + mal * 6 + sus * 4);
+  else if (mal >= 2) score = Math.min(100, 35 + mal * 8 + sus * 4);
+  else if (mal === 1) score = Math.min(35, 18 + sus * 4);
+  else score = Math.min(40, sus * 8);
   const evidence: string[] = [];
-  if (mal > 0) evidence.push(`${mal} security vendors flagged this URL as malicious`);
-  if (sus > 0) evidence.push(`${sus} vendors marked it suspicious`);
-  if (harm > 0 && mal === 0 && sus === 0) evidence.push(`${harm} vendors marked it harmless`);
-  return { name: "VirusTotal", score, weight: 0.35, evidence,
-    status: mal > 0 ? "bad" : sus > 0 ? "warn" : "ok" };
+  if (mal > 0) {
+    evidence.push(`${mal} security vendor${mal > 1 ? "s" : ""} flagged this URL as malicious (out of ${totalVerdicts})`);
+    if (noisySingleFp) evidence.push(`Likely a false positive — ${harm} vendors mark it harmless and only 1 disagrees`);
+  }
+  if (sus > 0) evidence.push(`${sus} vendor${sus > 1 ? "s" : ""} marked it suspicious`);
+  if (harm > 0 && mal === 0 && sus === 0) evidence.push(`${harm} vendors mark it harmless`);
+  const status: Layer["status"] = mal >= 2 ? "bad" : (mal === 1 && !noisySingleFp) || sus > 0 ? "warn" : "ok";
+  return { name: "VirusTotal", score, weight: 0.30, evidence, status };
 }
+
 
 // Domain age via RDAP (no API key needed)
 async function rdapAgeLayer(host: string): Promise<Layer> {
@@ -214,7 +227,7 @@ async function geminiLayer(url: string, layers: Layer[]): Promise<{ layer: Layer
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: "You are a cautious cybersecurity analyst. EVIDENCE-ONLY. Do NOT assume malice from an unfamiliar brand name or new domain alone. If layers contain no strong negative signal, return verdict='safe' or 'unknown' with low risk. Only return 'malicious' when at least one of: VirusTotal malicious>=1, raw-IP host, brand impersonation in hostname, homograph, or 3+ strong heuristic flags. Never invent details that aren't in the evidence. Output structured JSON via the tool." },
+          { role: "system", content: "You are a cautious cybersecurity analyst. EVIDENCE-ONLY: every number, vendor count or claim in your response MUST come from the layer evidence below — NEVER invent vendor counts, statistics, or breaches. If a single VirusTotal vendor (1/many) flags a URL while 20+ mark it harmless, treat it as a likely false positive and DO NOT call it malicious. Mark 'malicious' only when: VirusTotal malicious >= 2, OR raw-IP host, OR clear brand impersonation in hostname, OR homograph/punycode, OR 3+ strong heuristic flags. For unfamiliar but otherwise-clean domains, prefer verdict='safe' with confidence 50-70 over alarmist 'suspicious'. Quote the actual numbers from the evidence (e.g. '1 of 93 vendors flagged'). Output structured JSON via the tool." },
           { role: "user", content: `URL: ${url}\n\nLayer evidence:\n${summary}` },
         ],
         tools: [{ type: "function", function: { name: "report_url_analysis", parameters: {
@@ -305,23 +318,27 @@ Deno.serve(async (req) => {
     const trusted = isTrusted(host);
     const { score: blendedScore, confidence: confCoverage } = blend(layers);
 
-    // Final score with safety caps
+    // Final score with safety caps — trusted/clean wins over noisy single-vendor VT detections.
     let score = blendedScore;
+    const vtMal = vt && !vt.pending ? (vt.malicious || 0) : 0;
+    const vtHarm = vt && !vt.pending ? (vt.harmless || 0) : 0;
+    const vtClean = vt && !vt.pending && vtMal === 0 && (vt.suspicious ?? 0) === 0 && vtHarm >= 3;
+    const noisyFp = vtMal === 1 && vtHarm >= 20;
     if (trusted) score = Math.min(score, 8);
-    // If VT is definitively clean and heuristics are mild, hold near safe
-    const vtClean = vt && !vt.pending && (vt.malicious ?? 0) === 0 && (vt.suspicious ?? 0) === 0 && (vt.harmless ?? 0) >= 3;
     if (vtClean && heur.score < 30) score = Math.min(score, 15);
+    if (noisyFp && heur.score < 30) score = Math.min(score, 25);
     score = Math.max(0, Math.min(100, score));
 
-    // Verdict — 6 levels
+    // Verdict — 6 levels. Require >=2 VT detections for "hardMalicious" — single-vendor flags are false-positive-prone.
     let verdict_level: string;
     let verdict: "safe"|"suspicious"|"malicious"|"unknown";
-    const hardMalicious = (vt && !vt.pending && (vt.malicious || 0) >= 1) || heur.score >= 70;
+    const hardMalicious = !trusted && ((vt && !vt.pending && vtMal >= 2) || heur.score >= 70);
     if (hardMalicious || score >= 80) { verdict_level = "Malicious"; verdict = "malicious"; }
     else if (score >= 60) { verdict_level = "High Risk"; verdict = "malicious"; }
     else if (score >= 40) { verdict_level = "Suspicious"; verdict = "suspicious"; }
+    else if (trusted) { verdict_level = "Trusted"; verdict = "safe"; }
     else if (score >= 20) { verdict_level = "Unknown"; verdict = "suspicious"; }
-    else if (trusted || vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
+    else if (vtClean) { verdict_level = "Trusted"; verdict = "safe"; }
     else { verdict_level = "Likely Safe"; verdict = "safe"; }
 
     // Confidence — blend AI confidence with layer coverage
