@@ -18,6 +18,16 @@ const TRUSTED_SUFFIXES = [
   "lovable.dev","supabase.co","supabase.com","vercel.app","netlify.app","github.io","mozilla.org",
   "yahoo.com","duckduckgo.com","zoom.us","slack.com","discord.com","discord.gg","t.me","telegram.org",
   "drive.google.com","docs.google.com","maps.google.com","play.google.com","limeox.com",
+  // Common legit business/tooling domains often misflagged
+  "shopify.com","wordpress.com","wordpress.org","medium.com","substack.com","notion.so","airtable.com",
+  "figma.com","canva.com","dropbox.com","box.com","onedrive.live.com","sharepoint.com","adobe.com",
+  "atlassian.com","trello.com","asana.com","monday.com","intercom.com","zendesk.com","hubspot.com",
+  "salesforce.com","mailchimp.com","sendgrid.com","twilio.com","cloudfront.net","akamai.net","fastly.net",
+  "ebay.com","walmart.com","target.com","bestbuy.com","etsy.com","alibaba.com","aliexpress.com",
+  "flipkart.com","myntra.com","booking.com","airbnb.com","uber.com","lyft.com","doordash.com",
+  "nytimes.com","bbc.com","bbc.co.uk","cnn.com","reuters.com","bloomberg.com","forbes.com",
+  "wikipedia.org","wiktionary.org","archive.org","stackexchange.com","quora.com","pinterest.com",
+  "tumblr.com","tiktok.com","snapchat.com","twitch.tv","vimeo.com","soundcloud.com",
 ];
 function isTrusted(host: string) {
   return TRUSTED_SUFFIXES.some((d) => host === d || host.endsWith(`.${d}`));
