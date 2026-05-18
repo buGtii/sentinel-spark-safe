@@ -101,7 +101,7 @@ export function scoreUrl(url: string): DetectionResult {
   }
   for (const brand of BRAND_TOKENS) {
     if (host.includes(brand) && !host.endsWith(`.${brand}.com`) && host !== `${brand}.com`) {
-      score += 55;
+      score += 70;
       reasons.push(`Looks like a "${brand}" lookalike domain`);
       break;
     }
@@ -132,7 +132,7 @@ export function analyzeMessage(text: string): DetectionResult {
       if (reasons.length < 5) reasons.push(`Matched scam phrase: "${k}"`);
     }
   }
-  score += Math.min(kwHits * 15, 65);
+  score += Math.min(kwHits * 18, 70);
 
   if (urls.length) {
     score += 10;
