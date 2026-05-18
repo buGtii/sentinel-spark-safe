@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { runScan, persistScan } from "@/lib/scans";
 import { VerdictBadge } from "@/components/VerdictBadge";
-import { ShieldCheck, Loader2, ExternalLink, ArrowLeft, Link2, AlertTriangle } from "lucide-react";
+import { ShieldCheck, Loader2, ExternalLink, ArrowLeft, Link2, AlertTriangle, Eye } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { addXp } from "@/lib/gamify";
+import { scoreUrl } from "@/lib/detector";
 
 const CACHE_KEY = "cybersmart.linkguard.cache";
 type CacheEntry = { verdict: string; risk_score: number; confidence?: number; at: number };
@@ -86,6 +87,23 @@ export default function SafeLink() {
   const verdict = result?.verdict;
   const isDanger = verdict === "malicious" || verdict === "suspicious";
 
+  // On-device, instant pre-scan so the user sees *why* a link is risky
+  // even before the cloud verdict comes back.
+  const preScan = useMemo(() => {
+    const candidate = (params.get("url") || url || "").trim();
+    if (!candidate) return null;
+    const normalized = /^https?:\/\//i.test(candidate) ? candidate : "https://" + candidate;
+    return scoreUrl(normalized);
+  }, [url, params]);
+
+  const reasons = useMemo(() => {
+    const out: string[] = [];
+    const cloud = (result?.details?.reasons || result?.reasons) as string[] | undefined;
+    if (Array.isArray(cloud)) for (const r of cloud) out.push(r);
+    if (preScan?.reasons) for (const r of preScan.reasons) if (!out.includes(r)) out.push(r);
+    return out.slice(0, 6);
+  }, [result, preScan]);
+
   return (
     <div className="space-y-5">
       <header className="flex items-start gap-3">
@@ -111,9 +129,22 @@ export default function SafeLink() {
           placeholder="paste or share any link…"
           value={url}
           onChange={e => setUrl(e.target.value)}
-          className="font-mono text-sm"
+          className="font-mono text-sm break-all"
           onKeyDown={e => e.key === "Enter" && check()}
         />
+        {preScan && busy && (
+          <div className="rounded-lg bg-secondary/40 p-2.5 text-[11px] space-y-1">
+            <div className="flex items-center gap-1.5 font-mono text-primary">
+              <Eye className="h-3 w-3" /> ON-DEVICE PRE-SCAN
+              <span className="ml-auto opacity-70">{preScan.score}/100 · {preScan.verdict}</span>
+            </div>
+            {preScan.reasons.length > 0 && (
+              <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
+                {preScan.reasons.slice(0, 3).map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
         <Button
           onClick={() => check()}
           disabled={busy || !url}
@@ -133,18 +164,30 @@ export default function SafeLink() {
             </div>
           )}
 
-          {isDanger && (
-            <div className="glass rounded-xl p-4 border border-destructive/40 bg-destructive/5">
+          {(isDanger || reasons.length > 0) && (
+            <div className={`glass rounded-xl p-4 border ${
+              isDanger ? "border-destructive/40 bg-destructive/5" : "border-warning/40 bg-warning/5"
+            }`}>
               <div className="flex items-center gap-2 mb-2">
-                <AlertTriangle className="h-4 w-4 text-destructive" />
-                <div className="text-sm font-semibold text-destructive">
-                  This link looks {verdict}.
+                <AlertTriangle className={`h-4 w-4 ${isDanger ? "text-destructive" : "text-warning"}`} />
+                <div className={`text-sm font-semibold ${isDanger ? "text-destructive" : "text-warning"}`}>
+                  {isDanger
+                    ? `This link looks ${verdict}.`
+                    : "Open with caution — review the reasons below."}
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Opening it could expose you to phishing, malware, or credential theft.
-                We strongly recommend you do <span className="text-destructive font-semibold">not</span> proceed.
-              </p>
+              {reasons.length > 0 ? (
+                <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-1">
+                  {reasons.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Opening it could expose you to phishing, malware, or credential theft.
+                </p>
+              )}
+              <div className="mt-2 text-[10px] font-mono break-all text-muted-foreground/80">
+                {url}
+              </div>
             </div>
           )}
 
@@ -160,6 +203,7 @@ export default function SafeLink() {
             </Button>
             <Button
               onClick={() => { setCountdown(null); openLink(); }}
+              data-skip-guard
               className={isDanger
                 ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
                 : "gradient-primary text-primary-foreground glow"}

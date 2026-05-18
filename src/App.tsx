@@ -37,15 +37,25 @@ import YaraBuilder from "./pages/YaraBuilder";
 import ThreatFeeds from "./pages/ThreatFeeds";
 import SafeLink from "./pages/SafeLink";
 import Guardian from "./pages/Guardian";
+import Privacy from "./pages/Privacy";
 import NotFound from "./pages/NotFound.tsx";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { installLinkGuard } from "@/lib/linkGuard";
+import { installTapGuard } from "@/lib/tapGuard";
+import { installClipboardGuard } from "@/lib/clipboardGuard";
 import { Onboarding } from "@/components/Onboarding";
 
 function LinkGuardBridge() {
   const nav = useNavigate();
-  useEffect(() => installLinkGuard(nav), [nav]);
+  useEffect(() => {
+    const offDeep = installLinkGuard(nav);
+    const offTap = installTapGuard(nav);
+    const offClip = installClipboardGuard((url) =>
+      nav(`/safe-link?url=${encodeURIComponent(url)}`)
+    );
+    return () => { offDeep(); offTap(); offClip(); };
+  }, [nav]);
   return null;
 }
 
@@ -97,6 +107,7 @@ const App = () => (
           <Route path="/threat-feeds" element={<Protected><ThreatFeeds /></Protected>} />
           <Route path="/safe-link" element={<Protected><SafeLink /></Protected>} />
           <Route path="/guardian" element={<Protected><Guardian /></Protected>} />
+          <Route path="/privacy" element={<Protected><Privacy /></Protected>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
