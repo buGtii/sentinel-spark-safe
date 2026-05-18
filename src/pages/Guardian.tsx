@@ -23,6 +23,7 @@ import {
   type GuardianAlert,
   type GuardianStatus,
 } from "@/lib/guardian";
+import { readConsent, writeConsent } from "@/lib/consent";
 
 const MAX_FEED = 50;
 
@@ -30,9 +31,7 @@ export default function Guardian() {
   const native = guardianAvailable();
   const [status, setStatus] = useState<GuardianStatus | null>(null);
   const [alerts, setAlerts] = useState<GuardianAlert[]>([]);
-  const [consent, setConsent] = useState<boolean>(() =>
-    localStorage.getItem("guardian.consent") === "1"
-  );
+  const [consent, setConsent] = useState<boolean>(() => !!readConsent());
 
   const refresh = () => getGuardianStatus().then(setStatus);
 
@@ -52,7 +51,7 @@ export default function Guardian() {
   }, []);
 
   const acceptConsent = () => {
-    localStorage.setItem("guardian.consent", "1");
+    writeConsent({ notificationListener: true, tapGuard: true });
     setConsent(true);
   };
 
