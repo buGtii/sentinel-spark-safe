@@ -132,14 +132,14 @@ export function analyzeMessage(text: string): DetectionResult {
       if (reasons.length < 5) reasons.push(`Matched scam phrase: "${k}"`);
     }
   }
-  score += Math.min(kwHits * 12, 50);
+  score += Math.min(kwHits * 15, 65);
 
   if (urls.length) {
     score += 10;
     reasons.push(`${urls.length} link(s) embedded in message`);
     for (const u of urls) {
       const sub = scoreUrl(u);
-      score += Math.floor(sub.score / 3);
+      score += Math.floor(sub.score / 2);
       for (const r of sub.reasons) if (reasons.length < 8) reasons.push(r);
     }
   }
@@ -149,7 +149,7 @@ export function analyzeMessage(text: string): DetectionResult {
     reasons.push("Requests user to share an OTP / verification code");
   }
   if (/(seed|recovery)\s*(phrase|words)/.test(lower)) {
-    score += 40;
+    score += 70;
     reasons.push("Asks for crypto seed / recovery phrase");
   }
   if (/(urgent|immediately|within \d+ hours?)/.test(lower)) {
