@@ -80,11 +80,11 @@ export function scoreUrl(url: string): DetectionResult {
       reasons: ["URL could not be parsed"] };
   }
   if (SHORTENERS.has(host)) {
-    score += 35;
+    score += 40;
     reasons.push(`URL shortener (${host}) hides the real destination`);
   }
   if (host.includes("xn--")) {
-    score += 30;
+    score += 45;
     reasons.push(`Punycode in host (${host}) — possible homograph attack`);
   }
   if (/\d{4,}/.test(host)) {
@@ -101,7 +101,7 @@ export function scoreUrl(url: string): DetectionResult {
   }
   for (const brand of BRAND_TOKENS) {
     if (host.includes(brand) && !host.endsWith(`.${brand}.com`) && host !== `${brand}.com`) {
-      score += 35;
+      score += 55;
       reasons.push(`Looks like a "${brand}" lookalike domain`);
       break;
     }
@@ -111,7 +111,7 @@ export function scoreUrl(url: string): DetectionResult {
     reasons.push("No HTTPS — credentials would travel in plain text");
   }
   if (/@/.test(url.split("://")[1] || "")) {
-    score += 25;
+    score += 45;
     reasons.push("URL contains user-info ('@') which can mask the real host");
   }
   if (score > 100) score = 100;
