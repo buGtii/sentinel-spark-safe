@@ -16,6 +16,7 @@ const URL_RE =
 
 const KEYWORDS = [
   "verify your account", "verify account", "account suspended",
+  "has been suspended", "been suspended", "your account has been",
   "account locked", "unusual login", "security alert",
   "click here", "click below", "claim your", "you have won",
   "you've won", "lottery", "prize", "gift card",
