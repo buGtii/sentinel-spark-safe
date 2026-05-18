@@ -15,6 +15,7 @@ const tabs = [
 ];
 
 const moreItems = [
+  { to: "/guardian", icon: ShieldCheck, label: "Real-Time Guardian", desc: "On-device scam & phishing protection" },
   { to: "/safe-link", icon: ShieldCheck, label: "Safe Link Guard", desc: "Scan any link before opening" },
   { to: "/copilot", icon: Sparkles, label: "AI Copilot", desc: "Conversational security expert" },
   { to: "/learn", icon: GraduationCap, label: "Learn Cybersecurity", desc: "AI lessons + quizzes" },
