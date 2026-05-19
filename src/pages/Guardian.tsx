@@ -158,6 +158,39 @@ export default function Guardian() {
                 <Switch checked={!!status?.callProtectionEnabled} onCheckedChange={toggleCall} />
               }
             />
+
+            <Separator />
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <div className="font-semibold text-sm">Alert sensitivity</div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Minimum risk score that triggers a warning. Lower = more alerts.
+                  </p>
+                </div>
+                <Badge variant="outline" className="font-mono text-[10px]">
+                  {status?.alertThreshold ?? 35}/100
+                </Badge>
+              </div>
+              <Slider
+                value={[status?.alertThreshold ?? 35]}
+                min={10}
+                max={90}
+                step={5}
+                onValueChange={async (v) => {
+                  setStatus((s) => s ? { ...s, alertThreshold: v[0] } : s);
+                }}
+                onValueCommit={async (v) => {
+                  await setAlertThreshold(v[0]);
+                  refresh();
+                  toast({ title: `Sensitivity set to ${v[0]}/100` });
+                }}
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground mt-1 font-mono">
+                <span>Aggressive</span><span>Balanced</span><span>Strict</span>
+              </div>
+            </div>
           </Card>
 
           <Card className="p-4">
