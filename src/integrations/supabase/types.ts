@@ -76,6 +76,173 @@ export type Database = {
           },
         ]
       }
+      device_links: {
+        Row: {
+          created_at: string
+          device_a: string
+          device_b: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_a: string
+          device_b: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_a?: string
+          device_b?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_links_device_a_fkey"
+            columns: ["device_a"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "device_links_device_b_fkey"
+            columns: ["device_b"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      device_pairings: {
+        Row: {
+          claimed_at: string | null
+          claimed_by_device: string | null
+          code: string
+          created_at: string
+          expires_at: string
+          id: string
+          initiator_device: string
+          user_id: string
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by_device?: string | null
+          code: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          initiator_device: string
+          user_id: string
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by_device?: string | null
+          code?: string
+          created_at?: string
+          expires_at?: string
+          id?: string
+          initiator_device?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "device_pairings_claimed_by_device_fkey"
+            columns: ["claimed_by_device"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "device_pairings_initiator_device_fkey"
+            columns: ["initiator_device"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      devices: {
+        Row: {
+          created_at: string
+          device_uid: string
+          id: string
+          last_seen: string
+          name: string
+          platform: string
+          push_token: string | null
+          stolen_mode: boolean
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          device_uid: string
+          id?: string
+          last_seen?: string
+          name?: string
+          platform?: string
+          push_token?: string | null
+          stolen_mode?: boolean
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          device_uid?: string
+          id?: string
+          last_seen?: string
+          name?: string
+          platform?: string
+          push_token?: string | null
+          stolen_mode?: boolean
+          user_id?: string
+        }
+        Relationships: []
+      }
+      intruder_events: {
+        Row: {
+          captured_at: string
+          device_id: string
+          device_info: Json
+          failed_attempts: number
+          id: string
+          image_path: string | null
+          lat: number | null
+          lng: number | null
+          user_id: string
+        }
+        Insert: {
+          captured_at?: string
+          device_id: string
+          device_info?: Json
+          failed_attempts?: number
+          id?: string
+          image_path?: string | null
+          lat?: number | null
+          lng?: number | null
+          user_id: string
+        }
+        Update: {
+          captured_at?: string
+          device_id?: string
+          device_info?: Json
+          failed_attempts?: number
+          id?: string
+          image_path?: string | null
+          lat?: number | null
+          lng?: number | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "intruder_events_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       learning_progress: {
         Row: {
           completed_at: string
@@ -99,6 +266,44 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      locations: {
+        Row: {
+          accuracy: number | null
+          captured_at: string
+          device_id: string
+          id: string
+          lat: number
+          lng: number
+          user_id: string
+        }
+        Insert: {
+          accuracy?: number | null
+          captured_at?: string
+          device_id: string
+          id?: string
+          lat: number
+          lng: number
+          user_id: string
+        }
+        Update: {
+          accuracy?: number | null
+          captured_at?: string
+          device_id?: string
+          id?: string
+          lat?: number
+          lng?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "locations_device_id_fkey"
+            columns: ["device_id"]
+            isOneToOne: false
+            referencedRelation: "devices"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       phishing_sim_results: {
         Row: {

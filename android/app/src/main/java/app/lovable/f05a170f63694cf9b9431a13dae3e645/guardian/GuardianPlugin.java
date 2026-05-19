@@ -87,6 +87,7 @@ public class GuardianPlugin extends Plugin {
         for (String r : v.reasons) rs.put(r);
         ret.put("reasons", rs);
         call.resolve(ret);
+    }
 
     @PluginMethod
     public void setEnabled(PluginCall call) {

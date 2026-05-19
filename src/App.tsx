@@ -38,6 +38,7 @@ import ThreatFeeds from "./pages/ThreatFeeds";
 import SafeLink from "./pages/SafeLink";
 import Guardian from "./pages/Guardian";
 import Privacy from "./pages/Privacy";
+import AntiTheft from "./pages/AntiTheft";
 import NotFound from "./pages/NotFound.tsx";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -45,6 +46,7 @@ import { installLinkGuard } from "@/lib/linkGuard";
 import { installTapGuard } from "@/lib/tapGuard";
 import { installClipboardGuard } from "@/lib/clipboardGuard";
 import { Onboarding } from "@/components/Onboarding";
+import { PinGate } from "@/components/PinGate";
 
 function LinkGuardBridge() {
   const nav = useNavigate();
@@ -65,7 +67,7 @@ function Protected({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading...</div>;
   if (!user) return <Navigate to="/auth" replace />;
-  return <AppShell><Onboarding />{children}</AppShell>;
+  return <PinGate><AppShell><Onboarding />{children}</AppShell></PinGate>;
 }
 
 const App = () => (
@@ -108,6 +110,7 @@ const App = () => (
           <Route path="/safe-link" element={<Protected><SafeLink /></Protected>} />
           <Route path="/guardian" element={<Protected><Guardian /></Protected>} />
           <Route path="/privacy" element={<Protected><Privacy /></Protected>} />
+          <Route path="/anti-theft" element={<Protected><AntiTheft /></Protected>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

@@ -18,5 +18,9 @@
 	{
 		"pkg": "guardian (local)",
 		"classpath": "app.lovable.f05a170f63694cf9b9431a13dae3e645.guardian.GuardianPlugin"
+	},
+	{
+		"pkg": "antitheft (local)",
+		"classpath": "app.lovable.f05a170f63694cf9b9431a13dae3e645.antitheft.AntiTheftPlugin"
 	}
 ]
