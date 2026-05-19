@@ -229,6 +229,63 @@ export default function Guardian() {
               </ul>
             )}
           </Card>
+
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-primary" />
+                <h2 className="font-semibold">Threat log</h2>
+                <Badge variant="secondary" className="text-[10px]">{log.length}</Badge>
+              </div>
+              {log.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={async () => { await clearThreatLog(); setLog([]); }}
+                >
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Clear log
+                </Button>
+              )}
+            </div>
+            {log.length === 0 ? (
+              <div className="text-center py-6 text-xs text-muted-foreground">
+                No persisted threats yet. The last 100 detections are stored on-device only.
+              </div>
+            ) : (
+              <ul className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+                {log.slice(0, 30).map((a, i) => (
+                  <li
+                    key={`${a.at}-${i}`}
+                    className="flex items-center justify-between gap-2 text-xs border border-border/40 rounded px-2 py-1.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-medium">
+                        {a.source ?? a.package ?? "Unknown app"}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {a.reasons?.[0] ?? "Suspicious content"}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] font-mono ${
+                          a.verdict === "danger" ? "border-danger/50 text-danger" :
+                          a.verdict === "suspicious" ? "border-warning/50 text-warning" :
+                          "border-success/50 text-success"
+                        }`}
+                      >
+                        {a.score}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {new Date(a.at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
         </>
       )}
 
