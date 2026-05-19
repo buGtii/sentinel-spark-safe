@@ -10,6 +10,7 @@ export interface GuardianStatus {
   guardianEnabled: boolean;
   callProtectionEnabled: boolean;
   phishingUiDetection: boolean;
+  alertThreshold?: number;
 }
 
 export interface GuardianAlert {
@@ -25,11 +26,22 @@ export interface GuardianAlert {
   at: number;
 }
 
+export interface UrlVerdict {
+  score: number;
+  level: GuardianVerdict;
+  host: string | null;
+  reasons: string[];
+}
+
 interface GuardianPlugin {
   getStatus(): Promise<GuardianStatus>;
   setEnabled(o: { enabled: boolean }): Promise<void>;
   setCallProtection(o: { enabled: boolean }): Promise<void>;
   setAccessibilityScan(o: { enabled: boolean }): Promise<void>;
+  setAlertThreshold(o: { threshold: number }): Promise<void>;
+  getThreatLog(): Promise<{ entries: GuardianAlert[] }>;
+  clearThreatLog(): Promise<void>;
+  scanUrl(o: { url: string }): Promise<UrlVerdict>;
   openNotificationAccessSettings(): Promise<void>;
   openAccessibilitySettings(): Promise<void>;
   openOverlaySettings(): Promise<void>;
@@ -52,6 +64,7 @@ const webFallback: GuardianStatus = {
   guardianEnabled: false,
   callProtectionEnabled: false,
   phishingUiDetection: false,
+  alertThreshold: 35,
 };
 
 export async function getGuardianStatus(): Promise<GuardianStatus> {
@@ -70,6 +83,25 @@ export async function setCallProtection(enabled: boolean) {
 export async function setPhishingUiDetection(enabled: boolean) {
   if (!guardianAvailable()) return;
   await native.setAccessibilityScan({ enabled });
+}
+export async function setAlertThreshold(threshold: number) {
+  if (!guardianAvailable()) return;
+  await native.setAlertThreshold({ threshold });
+}
+export async function getThreatLog(): Promise<GuardianAlert[]> {
+  if (!guardianAvailable()) return [];
+  try {
+    const r = await native.getThreatLog();
+    return (r?.entries ?? []).slice().reverse();
+  } catch { return []; }
+}
+export async function clearThreatLog() {
+  if (!guardianAvailable()) return;
+  await native.clearThreatLog();
+}
+export async function scanUrlNative(url: string): Promise<UrlVerdict | null> {
+  if (!guardianAvailable()) return null;
+  try { return await native.scanUrl({ url }); } catch { return null; }
 }
 export async function openNotificationAccess() {
   if (guardianAvailable()) await native.openNotificationAccessSettings();
