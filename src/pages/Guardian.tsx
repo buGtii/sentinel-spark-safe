@@ -17,12 +17,16 @@ import {
   setGuardianEnabled,
   setCallProtection,
   setPhishingUiDetection,
+  setAlertThreshold,
+  getThreatLog,
+  clearThreatLog,
   openNotificationAccess,
   openAccessibility,
   onGuardianAlert,
   type GuardianAlert,
   type GuardianStatus,
 } from "@/lib/guardian";
+import { Slider } from "@/components/ui/slider";
 import { readConsent, writeConsent } from "@/lib/consent";
 
 const MAX_FEED = 50;
