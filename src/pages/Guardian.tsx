@@ -37,7 +37,12 @@ export default function Guardian() {
   const [alerts, setAlerts] = useState<GuardianAlert[]>([]);
   const [consent, setConsent] = useState<boolean>(() => !!readConsent());
 
-  const refresh = () => getGuardianStatus().then(setStatus);
+  const [log, setLog] = useState<GuardianAlert[]>([]);
+
+  const refresh = () => {
+    getGuardianStatus().then(setStatus);
+    getThreatLog().then(setLog);
+  };
 
   useEffect(() => {
     refresh();
@@ -50,6 +55,7 @@ export default function Guardian() {
   useEffect(() => {
     const off = onGuardianAlert((a) => {
       setAlerts((prev) => [a, ...prev].slice(0, MAX_FEED));
+      setLog((prev) => [a, ...prev].slice(0, 100));
     });
     return off;
   }, []);
