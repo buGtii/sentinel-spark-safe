@@ -51,8 +51,42 @@ public class GuardianPlugin extends Plugin {
         ret.put("guardianEnabled", GuardianPrefs.isEnabled(ctx));
         ret.put("callProtectionEnabled", GuardianPrefs.isCallProtectionEnabled(ctx));
         ret.put("phishingUiDetection", GuardianPrefs.isAccessibilityScanEnabled(ctx));
+        ret.put("alertThreshold", GuardianPrefs.getThreshold(ctx));
         call.resolve(ret);
     }
+
+    @PluginMethod
+    public void setAlertThreshold(PluginCall call) {
+        int v = call.getInt("threshold", 35);
+        GuardianPrefs.setThreshold(getContext(), v);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getThreatLog(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("entries", GuardianPrefs.readLogArray(getContext()));
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void clearThreatLog(PluginCall call) {
+        GuardianPrefs.clearLog(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void scanUrl(PluginCall call) {
+        String url = call.getString("url", "");
+        UrlScanner.Verdict v = UrlScanner.scan(url);
+        JSObject ret = new JSObject();
+        ret.put("score", v.score);
+        ret.put("level", v.level);
+        ret.put("host", v.host);
+        org.json.JSONArray rs = new org.json.JSONArray();
+        for (String r : v.reasons) rs.put(r);
+        ret.put("reasons", rs);
+        call.resolve(ret);
 
     @PluginMethod
     public void setEnabled(PluginCall call) {
