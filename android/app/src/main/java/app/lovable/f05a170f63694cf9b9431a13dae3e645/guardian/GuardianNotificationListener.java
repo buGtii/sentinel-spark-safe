@@ -67,7 +67,23 @@ public class GuardianNotificationListener extends NotificationListenerService {
             if (text == null || text.trim().length() < 4) return;
 
             ScamHeuristics.Result r = ScamHeuristics.analyze(text);
-            if (r.score < 35) return; // benign — drop silently
+
+            // Fold per-URL scanner verdicts into the final score
+            int boost = 0;
+            for (String u : r.urls) {
+                UrlScanner.Verdict v = UrlScanner.scan(u);
+                if (v.score >= 35) {
+                    boost = Math.max(boost, v.score / 2);
+                    if (r.reasons.size() < 6 && !v.reasons.isEmpty()) {
+                        r.reasons.add("Link " + v.host + ": " + v.reasons.get(0));
+                    }
+                }
+            }
+            int finalScore = Math.min(100, r.score + boost);
+            String verdict = finalScore >= 70 ? "danger" : finalScore >= 35 ? "suspicious" : "safe";
+
+            int threshold = GuardianPrefs.getThreshold(this);
+            if (finalScore < threshold) return; // below user's chosen sensitivity
 
             String key = sbn.getPackageName() + ":" + Integer.toHexString(text.hashCode());
             long now = System.currentTimeMillis();
@@ -77,11 +93,33 @@ public class GuardianNotificationListener extends NotificationListenerService {
             if (seen.size() > 200) seen.clear();
 
             String sourceApp = appLabel(sbn.getPackageName());
-            postWarning(sourceApp, r);
-            emitToJs(sbn.getPackageName(), sourceApp, r);
+            ScamHeuristics.Result merged =
+                    new ScamHeuristics.Result(finalScore, verdict, r.urls, r.reasons);
+            postWarning(sourceApp, merged);
+            persistLog(sbn.getPackageName(), sourceApp, merged);
+            emitToJs(sbn.getPackageName(), sourceApp, merged);
         } catch (Throwable t) {
             // Never crash the listener — Android will revoke access.
         }
+    }
+
+    private void persistLog(String pkg, String sourceApp, ScamHeuristics.Result r) {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("type", "notification");
+            o.put("package", pkg);
+            o.put("source", sourceApp);
+            o.put("score", r.score);
+            o.put("verdict", r.verdict);
+            o.put("at", System.currentTimeMillis());
+            org.json.JSONArray reasons = new org.json.JSONArray();
+            for (String s : r.reasons) reasons.put(s);
+            o.put("reasons", reasons);
+            org.json.JSONArray urls = new org.json.JSONArray();
+            for (String s : r.urls) urls.put(s);
+            o.put("urls", urls);
+            GuardianPrefs.appendLog(this, o);
+        } catch (Throwable ignored) {}
     }
 
     private String extractText(Notification n) {
